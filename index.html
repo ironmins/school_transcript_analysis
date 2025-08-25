@@ -1,0 +1,655 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>(2022개정) 고1 내신 분석 – 브라우저 전용</title>
+  <meta name="description" content="고등학교 1학년 내신(5등급) 데이터를 브라우저에서만 로컬로 분석하는 경량 웹앱" />
+  <!-- 외부 라이브러리: SheetJS + Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    :root{
+      --bg: #0b1020;
+      --card: #121832;
+      --muted: #92a0c0;
+      --text: #e9eefc;
+      --accent: #7aa2ff;
+      --accent2: #52d6a5;
+      --danger: #ff6b6b;
+      --border: #22305b;
+    }
+    html,body{height:100%}
+    body{font-family: system-ui, -apple-system, Segoe UI, Roboto, "Noto Sans KR", Apple SD Gothic Neo, sans-serif; background: radial-gradient(1200px 800px at 10% 0%, #12204a 0%, var(--bg) 40%); color: var(--text); margin:0}
+    .container{max-width:1120px; margin:0 auto; padding:28px 16px 60px}
+    header{display:flex; align-items:center; justify-content:space-between; gap:16px; margin:4px 0 18px}
+    header h1{font-size:20px; font-weight:800; letter-spacing:.2px; margin:0}
+    header .meta{font-size:12px; color: var(--muted)}
+
+    .card{background: linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,.00)); border:1px solid var(--border); border-radius:16px; padding:16px}
+
+    .upload{display:grid; grid-template-columns: 1fr; gap:12px}
+    .drop{border:1.5px dashed #3a4a7a; border-radius:16px; padding:22px; text-align:center; transition:.2s}
+    .drop.drag{border-color: var(--accent)}
+    .row{display:flex; gap:12px; align-items:center; flex-wrap:wrap}
+    .row> *{flex: none}
+    .btn{appearance:none; border:none; padding:10px 14px; border-radius:12px; background: var(--accent); color:#0d1020; font-weight:700; cursor:pointer}
+    .btn.secondary{background:#2b3764; color:var(--text)}
+    .btn.ghost{background:transparent; border:1px solid var(--border); color:var(--text)}
+    .btn.danger{background:var(--danger); color:white}
+    .tag{font-size:12px; color: var(--muted)}
+    input[type=file]{display:none}
+    .hint{font-size:12px; color: var(--muted)}
+    .grid{display:grid; gap:16px}
+
+    /* 탭 */
+    .tabs{margin-top:18px}
+    .tabbar{display:flex; gap:6px; flex-wrap:wrap}
+    .tabbar button{background:#192046; border:1px solid var(--border); color:var(--text); border-radius:999px; padding:8px 12px; cursor:pointer; font-weight:700}
+    .tabbar button.active{background: var(--accent); color:#081028}
+    .pane{display:none; margin-top:14px}
+    .pane.active{display:block}
+
+    /* 표 */
+    table{width:100%; border-collapse: collapse; border-spacing:0}
+    th, td{border-bottom:1px solid #25335f; padding:10px 8px; text-align:left; font-size:14px}
+    thead th{position:sticky; top:0; background:#141c3a; z-index:1}
+    tbody tr:hover{background:#131a33}
+
+    /* 2컬럼 레이아웃 */
+    .cols{display:grid; grid-template-columns: 1.1fr 1fr; gap:16px}
+    @media (max-width: 960px){.cols{grid-template-columns: 1fr}}
+
+    /* 선택/폼 */
+    select, input[type=number], input[type=text]{background:#0f1734; color:var(--text); border:1px solid #2a3a6b; border-radius:10px; padding:8px 10px}
+    label{font-size:13px; color: var(--muted)}
+
+    /* 모달(매핑) */
+    .modal{position:fixed; inset:0; background:rgba(4,8,16,.6); backdrop-filter: blur(3px); display:none; align-items:center; justify-content:center; z-index:9999}
+    .modal .sheet{background:#121832; border:1px solid var(--border); border-radius:16px; padding:16px; width:min(720px, 94vw)}
+    .modal h3{margin:0 0 6px; font-size:18px}
+
+    /* 프린트 */
+    @media print{
+      body{background:white; color:#000}
+      header, .no-print{display:none !important}
+      .container{max-width: 100%; padding:0}
+      .card{border:none}
+      .pane{display:block}
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div>
+      <h1>(2022개정) 고1 내신 분석 – 브라우저 전용</h1>
+      <div class="meta">데이터는 서버로 전송·저장되지 않으며, 모든 처리는 브라우저에서만 수행됨</div>
+    </div>
+    <div class="row no-print">
+      <button class="btn secondary" id="btnPrint">PDF/인쇄</button>
+      <button class="btn ghost" id="btnExport">CSV 내보내기</button>
+      <button class="btn ghost" id="btnReset">초기화</button>
+    </div>
+  </header>
+
+  <!-- 업로드 영역 -->
+  <section class="card upload no-print">
+    <div class="row">
+      <label><strong>NEIS 경로</strong> : 성적조회/통계 → 학기말성적조회 → 학기말성적종합일람표 → <b>XLS data</b> 다운로드</label>
+    </div>
+    <div id="drop" class="drop">엑셀 파일을 여기로 드래그하거나, 아래 버튼으로 선택(여러 파일 가능)</div>
+    <div class="row">
+      <label for="file" class="btn">파일 선택</label>
+      <input id="file" type="file" accept=".xls,.xlsx,.csv,.html" multiple />
+      <button class="btn secondary" id="btnAnalyze">분석 시작</button>
+      <div class="tag" id="fileInfo">선택된 파일: 0개</div>
+    </div>
+    <div class="hint">※ 첫 업로드 시 열 이름이 다르면 ‘열 매핑’ 창이 표시됩니다. 한 번 설정하면 같은 브라우저에서는 자동 기억합니다.</div>
+  </section>
+
+  <!-- 탭 -->
+  <section class="tabs">
+    <div class="tabbar no-print">
+      <button class="active" data-tab="tabDist">평균등급 분포</button>
+      <button data-tab="tabSubject">과목별 분석</button>
+      <button data-tab="tabStudent">학생별 분석</button>
+      <button data-tab="tabAbout">도구 정보</button>
+    </div>
+
+    <!-- 평균등급 분포 -->
+    <div id="tabDist" class="pane active">
+      <div class="cols">
+        <div class="card">
+          <h3>평균등급 히스토그램</h3>
+          <canvas id="histCanvas" height="180"></canvas>
+        </div>
+        <div class="card">
+          <h3>핵심 통계</h3>
+          <table>
+            <tbody id="statsTable"></tbody>
+          </table>
+          <div class="row" style="margin-top:8px">
+            <label>9등급 환산 보기
+              <select id="conv9">
+                <option value="off">끄기</option>
+                <option value="linear">선형 환산(참고용)</option>
+              </select>
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 과목별 분석 -->
+    <div id="tabSubject" class="pane">
+      <div class="row no-print">
+        <label>과목 선택
+          <select id="subjectSelect"></select>
+        </label>
+      </div>
+      <div class="cols">
+        <div class="card">
+          <h3 id="subjectTitle">과목 분포</h3>
+          <canvas id="subjectChart" height="180"></canvas>
+        </div>
+        <div class="card">
+          <h3>과목 통계</h3>
+          <table>
+            <tbody id="subjectStats"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <h3>과목별 상세 테이블</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>학년</th><th>반</th><th>번호</th><th>이름</th><th>과목</th><th>등급(5)</th><th>환산(9)</th>
+            </tr>
+          </thead>
+          <tbody id="subjectTable"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 학생별 분석 -->
+    <div id="tabStudent" class="pane">
+      <div class="row no-print">
+        <label>학년
+          <select id="selGrade"></select>
+        </label>
+        <label>반
+          <select id="selClass"></select>
+        </label>
+        <label>번호
+          <select id="selNo"></select>
+        </label>
+        <label>이름
+          <select id="selName"></select>
+        </label>
+      </div>
+      <div class="cols">
+        <div class="card">
+          <h3 id="stuTitle">학생별 과목 등급</h3>
+          <table>
+            <thead><tr><th>과목</th><th>등급(5)</th><th>환산(9)</th></tr></thead>
+            <tbody id="stuTable"></tbody>
+          </table>
+        </div>
+        <div class="card">
+          <h3>학생 요약</h3>
+          <table>
+            <tbody id="stuStats"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- 정보 -->
+    <div id="tabAbout" class="pane">
+      <div class="card">
+        <h3>보안·개인정보</h3>
+        <p>업로드한 파일은 서버로 전송되지 않고 브라우저 메모리에서만 처리되며, 페이지를 닫거나 새로고침하면 데이터가 소거됩니다.</p>
+        <h3>사용 팁</h3>
+        <ul>
+          <li>NEIS에서 반드시 <b>XLS data</b> 형식으로 내려받아 업로드하십시오.</li>
+          <li>여러 반/학기의 파일을 한 번에 올려도 됩니다. 필드는 자동 병합됩니다.</li>
+          <li>열 이름이 다를 경우 최초 1회 ‘열 매핑’을 설정하면 브라우저에 저장되어 반복 설정이 필요 없습니다.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- 열 매핑 모달 -->
+  <div id="mapModal" class="modal">
+    <div class="sheet">
+      <h3>열 매핑 설정(최초 1회)</h3>
+      <p class="hint" style="margin-top:0">업로드 파일의 열 이름을 아래 항목에 연결하세요. 동일 파일군이면 이후 자동 인식됩니다.</p>
+      <div class="grid" style="grid-template-columns: repeat(2, 1fr);">
+        <label>학년 열<select id="map-grade"></select></label>
+        <label>반 열<select id="map-class"></select></label>
+        <label>번호 열<select id="map-no"></select></label>
+        <label>이름 열<select id="map-name"></select></label>
+        <label>과목명 열<select id="map-subject"></select></label>
+        <label>등급(5) 열<select id="map-level"></select></label>
+      </div>
+      <div class="row" style="margin-top:12px; justify-content:flex-end">
+        <button class="btn ghost" id="mapCancel">취소</button>
+        <button class="btn" id="mapSave">저장</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+/*****************
+ * 전역 상태
+ *****************/
+const state = {
+  rawRows: [],       // 원시 행(키: 원본 헤더)
+  rows: [],          // 정규화된 행 {gradeLevel, classNo, stuNo, name, subject, level}
+  mapping: null,     // 헤더 매핑
+  charts: {
+    hist: null,
+    subj: null,
+  },
+};
+
+/*****************
+ * 유틸리티
+ *****************/
+const $ = sel => document.querySelector(sel);
+const $$ = sel => [...document.querySelectorAll(sel)];
+const mean = a => (a.length? a.reduce((s,v)=>s+v,0)/a.length : 0);
+const stdev = a => { if(!a.length) return 0; const m=mean(a); return Math.sqrt(a.reduce((s,v)=>s+(v-m)**2,0)/(a.length)); };
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+function toNumberStrict(x){
+  if(x===null || x===undefined) return NaN; 
+  const t = (""+x).replace(/[^0-9.\-]/g,"").trim();
+  const n = Number(t);
+  return Number.isFinite(n)? n : NaN;
+}
+
+function convert5to9Linear(v){
+  if(!Number.isFinite(v)) return null; // 5등급 평균값(실수)
+  return 1 + (v-1)*2; // 1→1, 5→9, 선형
+}
+
+function csvEscape(s){
+  const t = (s??"").toString();
+  return /[",\n]/.test(t) ? '"'+t.replace(/"/g,'""')+'"' : t;
+}
+
+/*****************
+ * 파일 업로드 / 파싱
+ *****************/
+const drop = $('#drop');
+const fileInput = $('#file');
+const fileInfo = $('#fileInfo');
+
+function updateFileInfo(files){
+  fileInfo.textContent = `선택된 파일: ${files.length}개`;
+}
+
+['dragenter','dragover'].forEach(ev=> drop.addEventListener(ev, e=>{ e.preventDefault(); drop.classList.add('drag'); }));
+['dragleave','drop'].forEach(ev=> drop.addEventListener(ev, e=>{ e.preventDefault(); drop.classList.remove('drag'); }));
+drop.addEventListener('drop', async e=>{
+  const files = [...e.dataTransfer.files];
+  fileInput.files = e.dataTransfer.files; // 동기화
+  updateFileInfo(files);
+  await handleFiles(files);
+});
+
+fileInput.addEventListener('change', async e=>{
+  const files = [...fileInput.files];
+  updateFileInfo(files);
+  await handleFiles(files);
+});
+
+async function handleFiles(files){
+  state.rawRows.length = 0;
+  for(const f of files){
+    const wb = XLSX.read(await f.arrayBuffer(), {type:'array'});
+    for(const name of wb.SheetNames){
+      const sheet = wb.Sheets[name];
+      const rows = XLSX.utils.sheet_to_json(sheet, {defval:null});
+      state.rawRows.push(...rows);
+    }
+  }
+  // 매핑 로드 또는 추정
+  state.mapping = loadMapping() || guessMapping(state.rawRows);
+  if(!isMappingValid(state.mapping, state.rawRows)){
+    openMappingModal(state.rawRows);
+  } else {
+    normalizeRows();
+    refreshAll();
+  }
+}
+
+/*****************
+ * 헤더 매핑
+ *****************/
+const MAP_KEYS = ['grade','class','no','name','subject','level'];
+function loadMapping(){
+  try{ const m = JSON.parse(localStorage.getItem('grade1_mapping')||'null'); return m; }catch(e){ return null; }
+}
+function saveMapping(m){
+  localStorage.setItem('grade1_mapping', JSON.stringify(m));
+}
+
+function isMappingValid(m, rows){
+  if(!m) return false;
+  if(!MAP_KEYS.every(k=>m[k])) return false;
+  // 키가 실제 헤더에 존재해야 함
+  const keys = Object.keys(rows[0]||{});
+  return MAP_KEYS.every(k=> keys.includes(m[k]));
+}
+
+function guessMapping(rows){
+  const keys = Object.keys(rows[0]||{});
+  const find = (...cands)=> keys.find(h=> cands.some(c=> new RegExp(c,'i').test(h)) );
+  const m = {
+    grade:   find('학년','grade'),
+    class:   find('반','학급','class'),
+    no:      find('번호','번(?!호)','student.*no','학번'),
+    name:    find('성명','이름','name'),
+    subject: find('과목','교과','subject'),
+    level:   find('석차?\s*등급','등급','level'),
+  };
+  if(Object.values(m).some(v=>!v)) return null;
+  return m;
+}
+
+function openMappingModal(rows){
+  const modal = $('#mapModal');
+  const keys = Object.keys(rows[0]||{});
+  ['grade','class','no','name','subject','level'].forEach(k=>{
+    const sel = $('#map-'+k);
+    sel.innerHTML = keys.map(h=>`<option value="${h}">${h}</option>`).join('');
+    // 추정값 선택
+    const g = (guessMapping(rows)||{})[k];
+    if(g) sel.value = g;
+  });
+  modal.style.display = 'flex';
+  $('#mapCancel').onclick = ()=>{ modal.style.display='none'; };
+  $('#mapSave').onclick = ()=>{
+    const m = {
+      grade: $('#map-grade').value,
+      class: $('#map-class').value,
+      no: $('#map-no').value,
+      name: $('#map-name').value,
+      subject: $('#map-subject').value,
+      level: $('#map-level').value,
+    };
+    saveMapping(m);
+    modal.style.display='none';
+    state.mapping = m;
+    normalizeRows();
+    refreshAll();
+  };
+}
+
+function normalizeRows(){
+  const m = state.mapping;
+  state.rows = state.rawRows.map(r=>({
+    gradeLevel: r[m.grade],
+    classNo: r[m.class],
+    stuNo: r[m.no],
+    name: r[m.name],
+    subject: r[m.subject],
+    level: toNumberStrict(r[m.level])
+  })).filter(x=> x.name && x.subject && Number.isFinite(x.level));
+}
+
+/*****************
+ * 통계 계산
+ *****************/
+function groupBy(arr, key){
+  const map = new Map();
+  arr.forEach(o=>{ const k = key(o); const a = map.get(k); (a? a.push(o): map.set(k,[o])); });
+  return map; // Map(key -> rows)
+}
+
+function studentKey(o){ return `${o.gradeLevel||''}-${o.classNo||''}-${o.stuNo||''}-${o.name||''}` }
+
+function getStudentAverages(){
+  const g = groupBy(state.rows, studentKey);
+  const out = [];
+  for(const [k,arr] of g){
+    const avg5 = mean(arr.map(x=>x.level));
+    out.push({key:k, name:arr[0].name, grade:arr[0].gradeLevel, classNo:arr[0].classNo, no:arr[0].stuNo, avg5});
+  }
+  return out;
+}
+
+/*****************
+ * 렌더링 – 평균등급 분포
+ *****************/
+const histCanvas = $('#histCanvas');
+const statsTable = $('#statsTable');
+const convSel = $('#conv9');
+
+function renderHistogram(){
+  const avgs = getStudentAverages().map(s=>s.avg5).filter(Number.isFinite);
+  if(!avgs.length){ drawEmpty(histCanvas); statsTable.innerHTML = '<tr><td>데이터가 없습니다.</td></tr>'; return; }
+  // 0.25 간격 bin (1.0~5.0)
+  const bins = new Array(16).fill(0); // 1.0..5.0 inclusive → 16 구간(0.25)
+  avgs.forEach(v=>{ const i = clamp(Math.floor((v-1)/0.25), 0, 15); bins[i]++; });
+  const labels = bins.map((_,i)=> (1+(i*0.25)).toFixed(2)+"~"+(1+((i+1)*0.25)).toFixed(2));
+
+  if(state.charts.hist) state.charts.hist.destroy();
+  state.charts.hist = new Chart(histCanvas, {
+    type:'bar',
+    data:{ labels, datasets:[{ label:'학생 수', data: bins }]},
+    options:{ responsive:true, scales:{ x:{ticks:{maxRotation:0, autoSkip:true}}, y:{beginAtZero:true}} }
+  });
+
+  const avg = mean(avgs), sd = stdev(avgs), max = Math.max(...avgs), min = Math.min(...avgs);
+  const conv = convSel.value==='linear' ? convert5to9Linear(avg) : null;
+  statsTable.innerHTML = `
+    <tr><th>학생 수</th><td>${avgs.length}</td></tr>
+    <tr><th>전체 평균등급(5)</th><td>${avg.toFixed(2)}</td></tr>
+    ${conv? `<tr><th>환산 평균(9, 선형)</th><td>${conv.toFixed(2)}</td></tr>`:''}
+    <tr><th>표준편차</th><td>${sd.toFixed(2)}</td></tr>
+    <tr><th>최고(최솟값)</th><td>${min.toFixed(2)}</td></tr>
+    <tr><th>최저(최댓값)</th><td>${max.toFixed(2)}</td></tr>`;
+}
+
+convSel.addEventListener('change', ()=>{
+  renderHistogram();
+  renderSubject();
+  renderStudent();
+});
+
+function drawEmpty(canvas){
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0,0,canvas.width, canvas.height);
+  ctx.font = '14px system-ui, sans-serif';
+  ctx.fillStyle = '#88a';
+  ctx.fillText('분석을 위해 XLS data 파일을 업로드하고 "분석 시작"을 누르세요.', 10, 20);
+}
+
+/*****************
+ * 렌더링 – 과목별
+ *****************/
+const subjectSelect = $('#subjectSelect');
+const subjectTitle = $('#subjectTitle');
+const subjectStats = $('#subjectStats');
+const subjectTable = $('#subjectTable');
+
+function populateSubjects(){
+  const subs = [...new Set(state.rows.map(r=> r.subject))].sort((a,b)=> a.localeCompare(b,'ko'));
+  subjectSelect.innerHTML = subs.map(s=>`<option value="${s}">${s}</option>`).join('');
+}
+
+subjectSelect.addEventListener('change', renderSubject);
+
+function renderSubject(){
+  const sub = subjectSelect.value; 
+  if(!sub){ subjectStats.innerHTML=''; subjectTable.innerHTML=''; drawEmpty($('#subjectChart')); return; }
+  const arr = state.rows.filter(r=> r.subject===sub);
+  const levels = arr.map(r=> r.level).filter(Number.isFinite);
+  const bins = [0,0,0,0,0]; levels.forEach(v=>{ const i=clamp(Math.round(v)-1,0,4); bins[i]++; })
+  const labels = ['1등급','2등급','3등급','4등급','5등급'];
+
+  if(state.charts.subj) state.charts.subj.destroy();
+  state.charts.subj = new Chart($('#subjectChart'), {
+    type:'bar', data:{ labels, datasets:[{label:'학생 수', data:bins}] }, options:{responsive:true, scales:{y:{beginAtZero:true}}}
+  });
+
+  subjectTitle.textContent = `과목 분포 – ${sub}`;
+  subjectStats.innerHTML = `
+    <tr><th>표본 수</th><td>${levels.length}</td></tr>
+    <tr><th>평균(5)</th><td>${mean(levels).toFixed(2)}</td></tr>
+    <tr><th>표준편차</th><td>${stdev(levels).toFixed(2)}</td></tr>
+    <tr><th>최고(최솟값)</th><td>${Math.min(...levels).toFixed(2)}</td></tr>
+    <tr><th>최저(최댓값)</th><td>${Math.max(...levels).toFixed(2)}</td></tr>`;
+
+  // 상세 테이블
+  const convOn = convSel.value==='linear';
+  subjectTable.innerHTML = arr.map(r=>`<tr>
+    <td>${r.gradeLevel??''}</td>
+    <td>${r.classNo??''}</td>
+    <td>${r.stuNo??''}</td>
+    <td>${r.name??''}</td>
+    <td>${r.subject}</td>
+    <td>${r.level}</td>
+    <td>${convOn? (convert5to9Linear(r.level).toFixed(2)) : '-'}</td>
+  </tr>`).join('');
+}
+
+/*****************
+ * 렌더링 – 학생별
+ *****************/
+const selGrade = $('#selGrade');
+const selClass = $('#selClass');
+const selNo = $('#selNo');
+const selName = $('#selName');
+const stuTable = $('#stuTable');
+const stuStats = $('#stuStats');
+const stuTitle = $('#stuTitle');
+
+function populateStudentSelectors(){
+  const grades = [...new Set(state.rows.map(r=> r.gradeLevel))].filter(x=>x!==undefined && x!==null).sort((a,b)=> (''+a).localeCompare((''+b),'ko'));
+  selGrade.innerHTML = [''].concat(grades).map(v=>`<option value="${v}">${v}</option>`).join('');
+  updateClassOptions();
+}
+
+function updateClassOptions(){
+  const g = selGrade.value; const rows = g? state.rows.filter(r=>''+r.gradeLevel === ''+g) : state.rows;
+  const classes = [...new Set(rows.map(r=> r.classNo))].filter(x=>x!==undefined && x!==null).sort((a,b)=> (''+a).localeCompare((''+b),'ko'));
+  selClass.innerHTML = [''].concat(classes).map(v=>`<option value="${v}">${v}</option>`).join('');
+  updateNoOptions();
+}
+function updateNoOptions(){
+  const g = selGrade.value; const c = selClass.value;
+  const rows = state.rows.filter(r=> (!g || ''+r.gradeLevel === ''+g) && (!c || ''+r.classNo === ''+c));
+  const nos = [...new Set(rows.map(r=> r.stuNo))].filter(x=>x!==undefined && x!==null).sort((a,b)=> (Number(a)||0)-(Number(b)||0));
+  selNo.innerHTML = [''].concat(nos).map(v=>`<option value="${v}">${v}</option>`).join('');
+  updateNameOptions();
+}
+function updateNameOptions(){
+  const g = selGrade.value; const c = selClass.value; const n = selNo.value;
+  const rows = state.rows.filter(r=> (!g || ''+r.gradeLevel === ''+g) && (!c || ''+r.classNo === ''+c) && (!n || ''+r.stuNo === ''+n));
+  const names = [...new Set(rows.map(r=> r.name))].sort((a,b)=> a.localeCompare(b,'ko'));
+  selName.innerHTML = [''].concat(names).map(v=>`<option value="${v}">${v}</option>`).join('');
+  renderStudent();
+}
+
+selGrade.addEventListener('change', ()=>{ updateClassOptions(); });
+selClass.addEventListener('change', ()=>{ updateNoOptions(); });
+selNo.addEventListener('change', ()=>{ updateNameOptions(); });
+selName.addEventListener('change', ()=>{ renderStudent(); });
+
+function renderStudent(){
+  const g = selGrade.value; const c = selClass.value; const n = selNo.value; const nm = selName.value;
+  let arr = state.rows.filter(r=> (!g || ''+r.gradeLevel === ''+g) && (!c || ''+r.classNo === ''+c) && (!n || ''+r.stuNo === ''+n) && (!nm || ''+r.name === ''+nm));
+  if(!arr.length){ stuTable.innerHTML=''; stuStats.innerHTML='<tr><td>학생을 선택하세요.</td></tr>'; stuTitle.textContent='학생별 과목 등급'; return; }
+  const key = studentKey(arr[0]);
+  stuTitle.textContent = `학생별 과목 등급 – ${arr[0].gradeLevel||''}학년 ${arr[0].classNo||''}반 ${arr[0].stuNo||''}번 ${arr[0].name}`;
+  const convOn = convSel.value==='linear';
+  arr = arr.sort((a,b)=> a.subject.localeCompare(b.subject,'ko'));
+  stuTable.innerHTML = arr.map(r=>`<tr><td>${r.subject}</td><td>${r.level}</td><td>${convOn? convert5to9Linear(r.level).toFixed(2): '-'}</td></tr>`).join('');
+  const avg5 = mean(arr.map(r=>r.level));
+  const conv = convOn? convert5to9Linear(avg5) : null;
+  stuStats.innerHTML = `
+    <tr><th>과목 수</th><td>${arr.length}</td></tr>
+    <tr><th>평균등급(5)</th><td>${avg5.toFixed(2)}</td></tr>
+    ${conv? `<tr><th>환산 평균(9, 선형)</th><td>${conv.toFixed(2)}</td></tr>`:''}
+  `;
+}
+
+/*****************
+ * 내보내기/인쇄/초기화
+ *****************/
+$('#btnExport').addEventListener('click', ()=>{
+  if(!state.rows.length) return;
+  const convOn = convSel.value==='linear';
+  const header = ['학년','반','번호','이름','과목','등급(5)','환산(9)'];
+  const lines = [header.map(csvEscape).join(',')];
+  state.rows.forEach(r=>{
+    const row = [r.gradeLevel, r.classNo, r.stuNo, r.name, r.subject, r.level, convOn? convert5to9Linear(r.level).toFixed(2):''];
+    lines.push(row.map(csvEscape).join(','));
+  });
+  const blob = new Blob([lines.join('\n')], {type:'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = 'grade1_analysis.csv'; a.click(); URL.revokeObjectURL(url);
+});
+
+$('#btnPrint').addEventListener('click', ()=> window.print());
+$('#btnReset').addEventListener('click', ()=>{
+  if(confirm('현재 데이터를 초기화하시겠습니까?')){ 
+    state.rawRows = []; state.rows = []; 
+    if(state.charts.hist) state.charts.hist.destroy();
+    if(state.charts.subj) state.charts.subj.destroy();
+    $('#subjectSelect').innerHTML='';
+    $('#subjectTable').innerHTML='';
+    $('#subjectStats').innerHTML='';
+    $('#statsTable').innerHTML='';
+    drawEmpty($('#histCanvas'));
+    drawEmpty($('#subjectChart'));
+    fileInput.value=''; updateFileInfo([]);
+  }
+});
+
+/*****************
+ * 탭 처리
+ *****************/
+$$('.tabbar button').forEach(btn=> btn.addEventListener('click', ()=>{
+  $$('.tabbar button').forEach(b=> b.classList.remove('active'));
+  btn.classList.add('active');
+  $$('.pane').forEach(p=> p.classList.remove('active'));
+  $('#'+btn.dataset.tab).classList.add('active');
+}));
+
+/*****************
+ * 메인 리프레시
+ *****************/
+function refreshAll(){
+  populateSubjects();
+  populateStudentSelectors();
+  renderHistogram();
+  renderSubject();
+  renderStudent();
+}
+
+// 초기 빈 화면 렌더
+window.addEventListener('load', ()=>{
+  drawEmpty($('#histCanvas'));
+  drawEmpty($('#subjectChart'));
+});
+
+// 분석 시작 버튼
+$('#btnAnalyze').addEventListener('click', ()=>{
+  if(!state.rows.length) {
+    if(state.rawRows.length){ normalizeRows(); }
+    else return alert('먼저 파일을 업로드하세요.');
+  }
+  refreshAll();
+});
+</script>
+</body>
+</html>
