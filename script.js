@@ -2853,3 +2853,36 @@ let scoreAnalyzer;
 document.addEventListener('DOMContentLoaded', () => {
     scoreAnalyzer = new ScoreAnalyzer();
 });
+
+
+// 🔗 결과 새 창으로 열기
+document.getElementById("openNewWindowBtn")?.addEventListener("click", () => {
+    if (!window.analyzer?.combinedData) {
+        alert("먼저 분석을 완료해야 새 창을 열 수 있습니다.");
+        return;
+    }
+
+    const analysisData = JSON.stringify(window.analyzer.combinedData);
+    const htmlContent = `
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>분석 결과 공유 페이지</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script>
+        window.PRELOADED_DATA = ${analysisData};
+    </script>
+    <script src="https://ironmins.github.io/school_transcript_practice/script.js"></script>
+    <link rel="stylesheet" href="https://ironmins.github.io/school_transcript_practice/style.css">
+</head>
+<body>
+    <div id="results"></div>
+</body>
+</html>
+    `;
+
+    const newWindow = window.open("", "_blank");
+    newWindow.document.write(htmlContent);
+    newWindow.document.close();
+});
