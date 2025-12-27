@@ -1031,77 +1031,69 @@ class ScoreAnalyzer {
             this.showError('먼저 파일을 분석하세요.');
             return;
         }
-        // Helper fetch
-        const safeFetchText = async (url) => {
-            try {
-                const res = await fetch(url, { cache: 'no-cache' });
-                if (!res.ok) throw new Error('HTTP ' + res.status);
-                return await res.text();
-            } catch (_) { return ''; }
-        };
-
-        // 1) index.html 생성 (원본 파일 선호, 실패 시 현재 문서 기반) + PRELOADED_DATA 주입
-        const parser = new DOMParser();
-        let indexSrc = await (async () => {
-            try {
-                const res = await fetch('index.html', { cache: 'no-cache' });
-                if (res && res.ok) return await res.text();
-            } catch (_) {}
-            return document.documentElement.outerHTML;
-        })();
-        const doc = parser.parseFromString(indexSrc, 'text/html');
-        const preload = doc.createElement('script');
-        preload.textContent = `window.APP_BUILD_UTC = new Date().toISOString();\nwindow.PRELOADED_DATA = ${JSON.stringify(this.combinedData)};`;
-        const appScript = doc.querySelector('script[src="script.js"]');
-        if (appScript) appScript.before(preload); else { doc.body.appendChild(preload); const s = doc.createElement('script'); s.src = 'script.js'; doc.body.appendChild(s); }
-        const indexOut = '<!DOCTYPE html>' + doc.documentElement.outerHTML;
-
-        // 2) 현재 style.css, script.js 내용 확보 (정확히 동일 파일을 사용 - 실패 시 에러 표시)
-        let cssText = await safeFetchText('style.css');
-        let jsText = await safeFetchText('script.js');
-        // fetch 실패 시, 사용자가 로컬 파일을 직접 선택해서 복사할 수 있도록 안내
-        if ((!cssText || !jsText) && window.showOpenFilePicker) {
-            try {
-                if (!cssText) {
-                    const [cssHandle] = await window.showOpenFilePicker({
-                        multiple: false,
-                        types: [{ description: 'CSS', accept: { 'text/css': ['.css'] } }]
-                    });
-                    const cssFile = await cssHandle.getFile();
-                    cssText = await cssFile.text();
-                }
-            } catch (e) { /* 사용자가 취소한 경우 등은 무시 */ }
-            try {
-                if (!jsText) {
-                    const [jsHandle] = await window.showOpenFilePicker({
-                        multiple: false,
-                        types: [{ description: 'JavaScript', accept: { 'application/javascript': ['.js'] } }]
-                    });
-                    const jsFile = await jsHandle.getFile();
-                    jsText = await jsFile.text();
-                }
-            } catch (e) { /* 무시 */ }
-        }
-        if (!cssText || !jsText) {
-            console.warn('원본 style.css/script.js를 일부 가져오지 못했습니다. ZIP에는 빈 파일이 포함될 수 있습니다.');
-        }
-
-        // 3) 항상 ZIP으로 같은 폴더 평면 구조로 다운로드
-        const zip = new JSZip();
-        zip.file('index.html', indexOut);
-        zip.file('style.css', cssText || '/* style */');
-        zip.file('script.js', jsText || '/* script */');
-        const blob = await zip.generateAsync({ type: 'blob' });
+    
+        const now = new Date();
+        const pad = n => String(n).padStart(2, '0');
+        const timestamp =
+            now.getFullYear() +
+            pad(now.getMonth() + 1) +
+            pad(now.getDate()) + '_' +
+            pad(now.getHours()) +
+            pad(now.getMinutes());
+    
+        const dataJson = JSON.stringify(this.combinedData);
+    
+        const resultsEl = document.getElementById('results');
+        const resultsHtml = resultsEl
+            ? resultsEl.outerHTML
+            : '<div id="results"></div>';
+    
+        let cssText = '';
+        try {
+            const res = await fetch('style.css', { cache: 'no-cache' });
+            if (res.ok) cssText = await res.text();
+        } catch (e) {}
+    
+        const htmlContent = `
+    <!DOCTYPE html>
+    <html lang="ko">
+    <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>고등학교 1학년 내신 분석 결과</title>
+    <style>
+    ${cssText}
+    </style>
+    </head>
+    <body>
+    
+    <div class="container">
+    <header>
+      <h1>고등학교 1학년 내신 분석 결과</h1>
+      <p>분석일: ${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}</p>
+    </header>
+    
+    ${resultsHtml}
+    </div>
+    
+    <script>
+    window.PRELOADED_DATA = ${dataJson};
+    </script>
+    
+    <script src="script.js"></script>
+    </body>
+    </html>
+    `.trim();
+    
+        const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        const now = new Date();
-        const pad = (n) => String(n).padStart(2, '0');
-        a.download = `analysis_${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}.zip`;
+        a.download = `analysis_${timestamp}.html`;
         document.body.appendChild(a);
         a.click();
-        setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 0);
-        return;
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
     }
 
     // 현재 화면 상태 그대로(차트 포함) 정적인 HTML로 저장
