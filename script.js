@@ -964,7 +964,7 @@ class ScoreAnalyzer {
         <div id="error" class="error-message" style="display:none;"></div>
         <footer class="app-footer">
             <div class="footer-right">
-                <div class="credits">Made by NAMGUNG YEON (Seolak high school)</div>
+                <div class="credits">Edited by IRONMIN (Jeonju high school) / Made by NAMGUNG YEON (Seolak high school)</div>
                 <a class="help-btn" href="https://namgungyeon.tistory.com/133" target="_blank" rel="noopener" title="도움말 보기">❔ 도움말</a>
             </div>
         </footer>
@@ -1147,7 +1147,7 @@ class ScoreAnalyzer {
             // 여기서는 모양 보존이 목적이므로 구조만 유지
 
             // 5) 최종 HTML 구성 (외부 스크립트/링크 제거하고 CSS는 인라인)
-            const title = document.title || '(2022개정) 고등학교 1학년 내신 분석 프로그램 Lite';
+            const title = document.title || '2025학년도 전주고등학교 1학년 내신 성적 분석 결과';
             const html = `<!DOCTYPE html>
 <html lang="ko">
 <head>
