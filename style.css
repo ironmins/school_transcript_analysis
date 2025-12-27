@@ -807,7 +807,7 @@ header p {
     display: flex;
     align-items: center;
     gap: 6px;
-    background: rgba(0, 0, 0, 0.25);
+    background: rgba(255, 255, 255, 0.15);
     padding: 6px 10px;
     border-radius: 6px;
     min-width: fit-content;
@@ -815,7 +815,7 @@ header p {
 
 .summary-metric-inline .metric-label {
     font-size: 0.7rem;
-    opacity: 1;
+    opacity: 0.8;
     text-transform: uppercase;
     letter-spacing: 0.5px;
     white-space: nowrap;
