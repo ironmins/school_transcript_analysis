@@ -4,28 +4,113 @@ class ScoreAnalyzer {
         this.combinedData = null; // 통합된 분석 데이터
         this.selectedFiles = null; // 사용자가 선택/드롭한 파일 목록
         this.subjectGroups = null; // 교과(군) 매핑 데이터
-        this.loadSubjectGroups(); // 교과(군) 데이터 로드
+        this.subjectGroupsReady = this.loadSubjectGroups(); // 교과(군) 데이터 로드
+        this.handleStudentDetailKeydown = this.handleStudentDetailKeydown.bind(this);
         this.initializeEventListeners();
 
         // If the page provides preloaded analysis data, render directly
         if (window.PRELOADED_DATA) {
-            try {
-                this.combinedData = window.PRELOADED_DATA;
-                const upload = document.querySelector('.upload-section');
-                if (upload) upload.style.display = 'none';
-                const results = document.getElementById('results');
-                if (results) results.style.display = 'block';
-                this.displayResults();
-                const exportBtn = document.getElementById('exportBtn');
-                if (exportBtn) exportBtn.disabled = false;
-            } catch (e) {
-                console.error('PRELOADED_DATA 처리 중 오류:', e);
+            this.initializePreloadedView();
+        }
+    }
+
+    async initializePreloadedView() {
+        try {
+            await this.subjectGroupsReady;
+            this.combinedData = window.PRELOADED_DATA;
+            // 저장된 HTML에서는 업로드 섹션 숨기기
+            if (window.PRELOADED_HIDE_UPLOAD) {
+                const uploadSection = document.querySelector('.upload-section');
+                if (uploadSection) uploadSection.style.display = 'none';
             }
+            const results = document.getElementById('results');
+            if (results) results.style.display = 'block';
+            this.displayResults();
+            this.applyPreloadedUiState();
+            const exportCsvBtn = document.getElementById('exportCsvBtn');
+            const exportHtmlBtn = document.getElementById('exportHtmlBtn');
+            if (exportCsvBtn) exportCsvBtn.disabled = false;
+            if (exportHtmlBtn) exportHtmlBtn.disabled = false;
+        } catch (e) {
+            console.error('PRELOADED_DATA 처리 중 오류:', e);
+        }
+    }
+
+    setIntroSectionVisible(visible) {
+        const container = document.querySelector('.container');
+        if (!container) return;
+        container.classList.toggle('post-analysis', !visible);
+    }
+
+    getCurrentUiState() {
+        const activeTabBtn = document.querySelector('.tab-btn.active');
+        const detailViewBtn = document.getElementById('detailViewBtn');
+
+        return {
+            activeTab: activeTabBtn ? activeTabBtn.dataset.tab : 'grade-analysis',
+            activeView: detailViewBtn && detailViewBtn.classList.contains('active') ? 'detail' : 'table',
+            selectedGrade: document.getElementById('gradeSelect')?.value || '',
+            selectedClass: document.getElementById('classSelect')?.value || '',
+            selectedStudent: document.getElementById('studentSelect')?.value || '',
+            studentNameSearch: document.getElementById('studentNameSearch')?.value || '',
+            studentSearch: document.getElementById('studentSearch')?.value || ''
+        };
+    }
+
+    applyPreloadedUiState() {
+        const state = window.PRELOADED_UI_STATE;
+        if (!state || !this.combinedData) return;
+
+        const gradeSelect = document.getElementById('gradeSelect');
+        const classSelect = document.getElementById('classSelect');
+        const studentSelect = document.getElementById('studentSelect');
+        const studentNameSearch = document.getElementById('studentNameSearch');
+        const studentSearch = document.getElementById('studentSearch');
+        const showStudentDetail = document.getElementById('showStudentDetail');
+
+        if (gradeSelect) gradeSelect.value = state.selectedGrade || '';
+        this.updateClassOptions();
+
+        if (classSelect) classSelect.value = state.selectedClass || '';
+        if (studentNameSearch) studentNameSearch.value = state.studentNameSearch || '';
+        this.updateStudentOptions();
+
+        if (studentSelect && state.selectedStudent) {
+            studentSelect.value = String(state.selectedStudent);
+        }
+        if (studentSearch) {
+            studentSearch.value = state.studentSearch || '';
+        }
+        if (showStudentDetail && studentSelect) {
+            showStudentDetail.disabled = !studentSelect.value;
+        }
+
+        this.filterStudentTable();
+
+        if (state.activeTab && document.querySelector(`[data-tab="${state.activeTab}"]`)) {
+            this.switchTab(state.activeTab);
+        }
+
+        if (state.activeView === 'detail' && studentSelect && studentSelect.value) {
+            const targetStudent = this.combinedData.students.find(
+                student => String(student.number) === String(studentSelect.value)
+            );
+            if (targetStudent) {
+                this.renderStudentDetail(targetStudent);
+                this.switchView('detail');
+            }
+        } else if (state.activeView === 'table') {
+            this.switchView('table');
         }
     }
 
     // 교과(군) 매핑 데이터 로드
     async loadSubjectGroups() {
+        if (window.PRELOADED_SUBJECT_GROUPS) {
+            this.subjectGroups = window.PRELOADED_SUBJECT_GROUPS;
+            return this.subjectGroups;
+        }
+
         try {
             const response = await fetch('subjectGroups.json');
             if (response.ok) {
@@ -39,6 +124,8 @@ class ScoreAnalyzer {
             console.warn('교과(군) 매핑 데이터 로드 실패:', error);
             this.setDefaultSubjectGroups();
         }
+
+        return this.subjectGroups;
     }
 
     // 기본 교과(군) 매핑 설정 (JSON 로드 실패 시)
@@ -84,6 +171,11 @@ class ScoreAnalyzer {
 
         // 3. 매칭되지 않으면 기타
         return "기타";
+    }
+
+    getSubjectColumnLabel(subject) {
+        if (!subject || !subject.name) return '';
+        return `${this.getSubjectGroup(subject.name)}_${subject.name}`;
     }
 
     // 학생의 교과(군)별 평균 등급 계산
@@ -154,6 +246,8 @@ class ScoreAnalyzer {
         const uploadSection = document.querySelector('.upload-section');
         const fileLabel = document.querySelector('.file-input-label');
 
+        document.addEventListener('keydown', this.handleStudentDetailKeydown);
+
         fileInput.addEventListener('change', (e) => {
             const files = Array.from(e.target.files);
             if (files.length > 0) {
@@ -215,7 +309,7 @@ class ScoreAnalyzer {
 
         if (exportCsvBtn) exportCsvBtn.addEventListener('click', () => { this.exportToCSV(); });
 
-        if (exportHtmlBtn) exportHtmlBtn.addEventListener('click', () => { this.exportAsPairedHtml(); });
+        if (exportHtmlBtn) exportHtmlBtn.addEventListener('click', () => { this.showHtmlExportOptionsModal(); });
 
         
 
@@ -230,6 +324,12 @@ class ScoreAnalyzer {
         if (studentSearch) {
             studentSearch.addEventListener('input', () => {
                 this.filterStudentTable();
+            });
+            studentSearch.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    this.searchAndShowStudentDetail(studentSearch.value.trim());
+                }
             });
         }
 
@@ -248,8 +348,30 @@ class ScoreAnalyzer {
             showStudentDetail.disabled = !studentSelect.value;
         });
         if (studentNameSearch) {
+            // 기존: 입력할 때마다 학생 목록 필터링
             studentNameSearch.addEventListener('input', () => {
                 this.updateStudentOptions();
+            });
+
+            // 추가: Enter 키로 상세 분석 화면 전환
+            studentNameSearch.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    const studentSelectEl = document.getElementById('studentSelect');
+                    if (!studentSelectEl) return;
+
+                    // 옵션이 placeholder 1개 + 학생 1개 = 총 2개일 때 자동 선택
+                    if (studentSelectEl.options.length === 2) {
+                        studentSelectEl.value = studentSelectEl.options[1].value;
+                        const showBtn = document.getElementById('showStudentDetail');
+                        if (showBtn) showBtn.disabled = false;
+                    }
+
+                    // 선택된 학생이 있으면 상세 분석 표시
+                    if (studentSelectEl.value) {
+                        this.showStudentDetail();
+                    }
+                }
             });
         }
 
@@ -268,6 +390,43 @@ class ScoreAnalyzer {
         if (pdfClassBtn) {
             pdfClassBtn.addEventListener('click', () => this.generateSelectedClassPDF());
         }
+    }
+
+    handleStudentDetailKeydown(event) {
+        if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
+            return;
+        }
+
+        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') {
+            return;
+        }
+
+        const target = event.target;
+        const tagName = target && target.tagName ? target.tagName.toLowerCase() : '';
+        if (
+            (target && target.isContentEditable) ||
+            tagName === 'input' ||
+            tagName === 'textarea' ||
+            tagName === 'select'
+        ) {
+            return;
+        }
+
+        const studentsTab = document.getElementById('students-tab');
+        const detailViewBtn = document.getElementById('detailViewBtn');
+        const detailView = document.getElementById('detailView');
+        const studentSelect = document.getElementById('studentSelect');
+
+        const isStudentsTabActive = !!studentsTab && studentsTab.classList.contains('active');
+        const isDetailViewActive = !!detailViewBtn && detailViewBtn.classList.contains('active');
+        const isDetailViewVisible = !!detailView && detailView.style.display !== 'none';
+
+        if (!isStudentsTabActive || !isDetailViewActive || !isDetailViewVisible || !studentSelect || !studentSelect.value) {
+            return;
+        }
+
+        event.preventDefault();
+        this.navigateStudentDetail(event.key === 'ArrowLeft' ? -1 : 1);
     }
 
     displayFileList(files) {
@@ -299,6 +458,7 @@ class ScoreAnalyzer {
         this.showLoading();
         
         try {
+            await this.subjectGroupsReady;
             this.filesData.clear();
             
             for (const file of files) {
@@ -401,7 +561,9 @@ class ScoreAnalyzer {
                         ranks: {},
                         subjectTotals: {},
                         percentiles: {},
-                        totalStudents: student.totalStudents
+                        totalStudents: student.totalStudents,
+                        hasGradeReportSource: fileData.format === 'grade-report',
+                        hasXlsDataSource: fileData.format !== 'grade-report'
                     });
                 } else {
                     // 기존 학생에 파일명 추가
@@ -409,6 +571,8 @@ class ScoreAnalyzer {
                 }
 
                 const combinedStudent = studentMap.get(studentKey);
+                combinedStudent.hasGradeReportSource = combinedStudent.hasGradeReportSource || fileData.format === 'grade-report';
+                combinedStudent.hasXlsDataSource = combinedStudent.hasXlsDataSource || fileData.format !== 'grade-report';
 
                 // 과목별 데이터 병합 (각 파일의 과목 데이터를 추가)
                 Object.keys(student.scores || {}).forEach(subjectName => {
@@ -547,7 +711,7 @@ class ScoreAnalyzer {
             }
             
             // 9등급 환산 평균 계산 (기존 데이터에 없는 경우)
-            if (!student.weightedAverage9Grade) {
+            if (student.weightedAverage9Grade === null || student.weightedAverage9Grade === undefined) {
                 student.weightedAverage9Grade = this.calculateWeightedAverage9Grade(student, this.combinedData.subjects);
             }
         });
@@ -574,13 +738,20 @@ class ScoreAnalyzer {
     }
 
     parseFileData(data, fileName) {
+        const format = this.detectFileFormat(data);
+        if (format === 'grade-report') {
+            console.log(`[${fileName}] 인쇄용 성적표 양식 감지`);
+            return this.parseGradeReport(data, fileName);
+        }
+
         const fileData = {
             fileName: fileName,
             data: data,
             subjects: [],
             students: [],
             grade: 1,
-            class: 1
+            class: 1,
+            format: 'xls-data'
         };
 
         // A3 셀에서 학년/반 정보 추출 (0-based index로는 행 2, 열 0)
@@ -659,6 +830,404 @@ class ScoreAnalyzer {
         });
     }
 
+    detectFileFormat(data) {
+        if (!data || data.length < 5) return 'xls-data';
+
+        const row4 = data[3];
+        if (!row4 || row4.length < 4) return 'xls-data';
+
+        const knownHeaders = [
+            '번호', '성명', '학년', '학기', '교과',
+            '과목명', '과목', '학점', '단위수',
+            '석차등급', '수강자수', '성취도', '원점수'
+        ];
+        let matchCount = 0;
+
+        for (let c = 0; c < Math.min(row4.length, 20); c++) {
+            const cell = String(row4[c] || '').replace(/\s+/g, '').trim();
+            if (knownHeaders.some(header => cell.includes(header))) {
+                matchCount++;
+            }
+        }
+
+        if (matchCount >= 4) return 'grade-report';
+
+        for (let c = 3; c < row4.length; c++) {
+            const cell = String(row4[c] || '').trim();
+            if (/^.+\(\d+\)$/.test(cell)) {
+                return 'xls-data';
+            }
+        }
+
+        return 'xls-data';
+    }
+
+    parseGradeReport(data, fileName) {
+        const fileData = {
+            fileName: fileName,
+            data: data,
+            subjects: [],
+            students: [],
+            grade: 1,
+            class: 1,
+            format: 'grade-report'
+        };
+
+        if (data[2] && data[2][0]) {
+            const info = String(data[2][0]);
+            const gradeMatches = info.match(/(\d+)\s*학년/g);
+            if (gradeMatches) {
+                const lastMatch = gradeMatches[gradeMatches.length - 1];
+                const gradeMatch = lastMatch.match(/(\d+)/);
+                if (gradeMatch) {
+                    const parsedGrade = parseInt(gradeMatch[1], 10);
+                    if (parsedGrade < 10) fileData.grade = parsedGrade;
+                }
+            }
+
+            const classMatch = info.match(/(\d+)\s*반/);
+            if (classMatch) {
+                fileData.class = parseInt(classMatch[1], 10);
+            }
+
+            console.log(`[인쇄용 양식] ${fileData.grade}학년 ${fileData.class}반 감지`);
+        }
+
+        const headerRow = data[3] || [];
+        const colMap = this._buildGradeReportColumnMap(headerRow);
+        console.log('[인쇄용 양식] 열 매핑:', JSON.stringify(colMap));
+
+        let curNumber = null;
+        let curName = null;
+        let curSchoolYear = null;
+        let curSemester = null;
+        let is예체능 = false;
+        let is진로선택 = false;
+
+        const subjectMap = new Map();
+        const studentMap = new Map();
+        const subjectOrder = [];
+
+        for (let i = 4; i < data.length; i++) {
+            const row = data[i];
+            if (!row || row.length === 0) continue;
+
+            const cellA = String(row[0] || '').trim();
+
+            if (cellA.includes('체육') && (cellA.includes('예술') || cellA.includes('과학탐구실험'))) {
+                is예체능 = true;
+                continue;
+            }
+            if (cellA.includes('진로') && cellA.includes('선택')) {
+                is진로선택 = true;
+                continue;
+            }
+            if (cellA.startsWith('<') && !cellA.includes('체육') && !cellA.includes('진로')) {
+                // 섹션 구분선은 그대로 건너뛴다.
+                continue;
+            }
+
+            if (this._isGradeReportHeaderRow(row, colMap)) continue;
+
+            const subjectName = this._grVal(row, colMap, 'subjectName');
+            const creditsRaw = this._grVal(row, colMap, 'credits');
+            if (!subjectName || String(subjectName).trim() === '') continue;
+
+            const credits = parseFloat(creditsRaw);
+            if (isNaN(credits)) continue;
+
+            const numVal = this._grVal(row, colMap, 'number');
+            if (numVal !== undefined && numVal !== null && numVal !== '') {
+                const parsedNumber = parseInt(numVal, 10);
+                if (!isNaN(parsedNumber)) {
+                    curNumber = parsedNumber;
+                    const nameVal = this._grVal(row, colMap, 'name');
+                    if (nameVal && String(nameVal).trim() !== '') {
+                        curName = String(nameVal).trim();
+                    }
+                }
+            }
+
+            const yearVal = this._grVal(row, colMap, 'schoolYear');
+            if (yearVal !== undefined && yearVal !== null && yearVal !== '') {
+                const parsedYear = parseInt(yearVal, 10);
+                if (!isNaN(parsedYear)) curSchoolYear = parsedYear;
+            }
+
+            const semVal = this._grVal(row, colMap, 'semester');
+            if (semVal !== undefined && semVal !== null && semVal !== '') {
+                const parsedSemester = parseInt(semVal, 10);
+                if (!isNaN(parsedSemester)) curSemester = parsedSemester;
+            }
+
+            if (curNumber === null) continue;
+
+            const subName = String(subjectName).trim();
+            const subjectGroup = String(this._grVal(row, colMap, 'subjectGroup') || '').trim();
+
+            let rawScore = null;
+            let subjectAvg = 0;
+            const rawScoreCell = this._grVal(row, colMap, 'rawScore');
+            const avgCell = this._grVal(row, colMap, 'subjectAvg');
+
+            if (rawScoreCell !== undefined && rawScoreCell !== null && rawScoreCell !== '') {
+                const rawStr = String(rawScoreCell).trim();
+                if (rawStr.includes('/')) {
+                    const parts = rawStr.split('/');
+                    const parsedRawScore = parseFloat(parts[0]);
+                    rawScore = isNaN(parsedRawScore) ? null : parsedRawScore;
+                    if (parts[1]) {
+                        subjectAvg = parseFloat(parts[1].split('(')[0]) || 0;
+                    }
+                } else {
+                    const parsedRawScore = parseFloat(rawStr);
+                    rawScore = isNaN(parsedRawScore) ? null : parsedRawScore;
+                }
+            }
+
+            if (avgCell !== undefined && avgCell !== null && avgCell !== '' && subjectAvg === 0) {
+                subjectAvg = parseFloat(avgCell) || 0;
+            }
+
+            let achievement = '';
+            if (is예체능 && colMap.achievement !== undefined) {
+                const achVal = this._grVal(row, colMap, 'achievement');
+                achievement = this._normalizeAchievementValue(achVal);
+                if (!achievement && colMap.achievement > 0) {
+                    achievement = this._normalizeAchievementValue(row[colMap.achievement - 1]);
+                }
+            } else {
+                achievement = this._normalizeAchievementValue(this._grVal(row, colMap, 'achievement'));
+            }
+
+            let gradeRank = NaN;
+            if (!is예체능) {
+                const gradeRankRaw = this._grVal(row, colMap, 'gradeRank');
+                if (gradeRankRaw !== undefined && gradeRankRaw !== null && gradeRankRaw !== '') {
+                    const gradeMatch = String(gradeRankRaw).trim().match(/\d+/);
+                    if (gradeMatch) gradeRank = parseInt(gradeMatch[0], 10);
+                }
+            }
+
+            let totalStudents = NaN;
+            if (!is예체능) {
+                const totalRaw = this._grVal(row, colMap, 'totalStudents');
+                if (totalRaw !== undefined && totalRaw !== null && totalRaw !== '') {
+                    const totalMatch = String(totalRaw).trim().match(/\d+/);
+                    if (totalMatch) totalStudents = parseInt(totalMatch[0], 10);
+                }
+            }
+
+            const distRaw = this._grVal(row, colMap, 'achievementDist');
+
+            if (!subjectMap.has(subName)) {
+                subjectMap.set(subName, {
+                    name: subName,
+                    credits: credits,
+                    averages: [],
+                    rawDistributions: [],
+                    group: subjectGroup,
+                    isCareerTrack: is진로선택,
+                    schoolYear: curSchoolYear,
+                    semester: curSemester
+                });
+                subjectOrder.push(subName);
+            }
+
+            const subjectInfo = subjectMap.get(subName);
+            if (subjectAvg > 0) subjectInfo.averages.push(subjectAvg);
+            if (distRaw && String(distRaw).trim() !== '') {
+                subjectInfo.rawDistributions.push(String(distRaw).trim());
+            }
+
+            if (!studentMap.has(curNumber)) {
+                studentMap.set(curNumber, {
+                    number: curNumber,
+                    name: curName || `학생${curNumber}`,
+                    scores: {},
+                    achievements: {},
+                    grades: {},
+                    ranks: {},
+                    subjectTotals: {},
+                    percentiles: {},
+                    totalStudents: null,
+                    sourceFormat: fileData.format,
+                    hasGradeReportSource: true,
+                    hasXlsDataSource: false
+                });
+            }
+
+            const student = studentMap.get(curNumber);
+            if (curName && curName !== `학생${curNumber}`) {
+                student.name = curName;
+            }
+
+            if (rawScore !== null) {
+                student.scores[subName] = rawScore;
+            }
+            if (achievement) student.achievements[subName] = achievement;
+
+            if (!is예체능) {
+                if (!isNaN(gradeRank)) student.grades[subName] = gradeRank;
+                if (!isNaN(totalStudents)) {
+                    student.subjectTotals[subName] = totalStudents;
+                    if (!student.totalStudents || totalStudents > student.totalStudents) {
+                        student.totalStudents = totalStudents;
+                    }
+                }
+            }
+        }
+
+        subjectOrder.forEach((subName, idx) => {
+            const info = subjectMap.get(subName);
+            const subject = {
+                name: info.name,
+                credits: info.credits,
+                columnIndex: idx,
+                average: info.averages.length > 0
+                    ? info.averages.reduce((sum, value) => sum + value, 0) / info.averages.length
+                    : 0,
+                scores: []
+            };
+
+            if (info.rawDistributions.length > 0) {
+                subject.distribution = this._parseAchievementDistString(info.rawDistributions[0]);
+            }
+
+            fileData.subjects.push(subject);
+        });
+
+        studentMap.forEach(student => {
+            student.weightedAverageGrade = this.calculateWeightedAverageGrade(student, fileData.subjects);
+            student.weightedAverage9Grade = this.calculateWeightedAverage9Grade(student, fileData.subjects);
+            fileData.students.push(student);
+        });
+
+        console.log(`[인쇄용 양식] 과목 ${fileData.subjects.length}개, 학생 ${fileData.students.length}명 파싱 완료`);
+        return fileData;
+    }
+
+    _buildGradeReportColumnMap(headerRow) {
+        const colMap = {};
+        const nameMap = [
+            { keys: ['번호'], field: 'number' },
+            { keys: ['성명', '이름'], field: 'name' },
+            { keys: ['학년'], field: 'schoolYear' },
+            { keys: ['학기'], field: 'semester' },
+            { keys: ['교과'], field: 'subjectGroup' },
+            { keys: ['과목명', '과목'], field: 'subjectName' },
+            { keys: ['학점', '단위수', '단위'], field: 'credits' },
+            { keys: ['원점수'], field: 'rawScore' },
+            { keys: ['과목평균'], field: 'subjectAvg' },
+            { keys: ['석차등급'], field: 'gradeRank' },
+            { keys: ['수강자수'], field: 'totalStudents' },
+            { keys: ['성취도별분포비율', '성취도별 분포비율', '분포비율'], field: 'achievementDist' }
+        ];
+
+        for (let c = 0; c < headerRow.length; c++) {
+            const raw = String(headerRow[c] || '').replace(/\s+/g, '').trim();
+            if (!raw) continue;
+
+            for (const mapping of nameMap) {
+                if (colMap[mapping.field] !== undefined) continue;
+                for (const key of mapping.keys) {
+                    if (raw === key.replace(/\s+/g, '')) {
+                        colMap[mapping.field] = c;
+                        break;
+                    }
+                }
+            }
+        }
+
+        for (let c = 0; c < headerRow.length; c++) {
+            const raw = String(headerRow[c] || '').replace(/\s+/g, '').trim();
+            if (!raw) continue;
+
+            for (const mapping of nameMap) {
+                if (colMap[mapping.field] !== undefined) continue;
+                for (const key of mapping.keys) {
+                    if (raw.includes(key.replace(/\s+/g, ''))) {
+                        colMap[mapping.field] = c;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (colMap.achievement === undefined) {
+            for (let c = 0; c < headerRow.length; c++) {
+                const raw = String(headerRow[c] || '').replace(/\s+/g, '').trim();
+                if (raw.includes('성취도') && !raw.includes('분포') && !raw.includes('비율')) {
+                    colMap.achievement = c;
+                    break;
+                }
+            }
+        }
+
+        if (colMap.subjectAvg === undefined) {
+            for (let c = 0; c < headerRow.length; c++) {
+                const raw = String(headerRow[c] || '').replace(/\s+/g, '').trim();
+                if (raw === '평균' && c !== colMap.rawScore) {
+                    colMap.subjectAvg = c;
+                    break;
+                }
+            }
+        }
+
+        if (colMap.rawScore === undefined && colMap.credits !== undefined) {
+            colMap.rawScore = colMap.credits + 1;
+        }
+
+        return colMap;
+    }
+
+    _isGradeReportHeaderRow(row, colMap) {
+        const cellA = String(row[0] || '').trim();
+        if (cellA === '번호') return true;
+
+        if (colMap.subjectName !== undefined) {
+            const subjectName = String(row[colMap.subjectName] || '').trim();
+            if (subjectName === '과목명' || subjectName === '과목') return true;
+        }
+
+        if (colMap.credits !== undefined) {
+            const credits = String(row[colMap.credits] || '').trim();
+            if (credits === '학점' || credits === '단위수') return true;
+        }
+
+        return false;
+    }
+
+    _grVal(row, colMap, field) {
+        if (colMap[field] === undefined) return undefined;
+        return row[colMap[field]];
+    }
+
+    _parseAchievementDistString(str) {
+        const distribution = {};
+        if (!str) return distribution;
+
+        const matches = str.match(/[ABCDE]\s*\(\s*\d+\.?\d*\s*\)/g);
+        if (matches) {
+            matches.forEach(match => {
+                const parsed = match.match(/([ABCDE])\s*\(\s*(\d+\.?\d*)\s*\)/);
+                if (parsed) distribution[parsed[1]] = parseFloat(parsed[2]);
+            });
+        }
+
+        return distribution;
+    }
+
+    _normalizeAchievementValue(value) {
+        if (value === undefined || value === null) return '';
+
+        const normalized = String(value).trim();
+        if (!normalized || normalized.includes('전입')) return '';
+
+        const match = normalized.match(/^[ABCDE]/);
+        return match ? match[0] : '';
+    }
+
     parseStudentData(data, fileData) {
         // 학생 데이터는 행 7부터 시작해서 각 학생마다 5행씩 사용
         // 행 7: 번호 + 합계(원점수)
@@ -699,14 +1268,17 @@ class ScoreAnalyzer {
                 achievements: {},
                 grades: {},
                 ranks: {},
+                subjectTotals: {},
+                percentiles: {},
+                sourceFormat: fileData.format,
+                hasGradeReportSource: fileData.format === 'grade-report',
+                hasXlsDataSource: fileData.format !== 'grade-report',
                 totalStudents: null
             };
 
             // 각 과목별 데이터 추출
             fileData.subjects.forEach(subject => {
                 const colIndex = subject.columnIndex;
-                // 과목별 수강자수 저장을 위해 초기화
-                if (!student.subjectTotals) student.subjectTotals = {};
                 
                 // 점수 (원점수 추출)
                 if (scoreRow[colIndex]) {
@@ -785,23 +1357,84 @@ class ScoreAnalyzer {
     calculateWeightedAveragePercentile(student, subjects) {
         let totalPercentilePoints = 0;
         let totalCredits = 0;
-        
-        // percentiles와 ranks 객체가 존재하는지 확인
-        if (!student.percentiles || !student.ranks) {
+    
+        // 1차: 석차 기반 백분위 (기존 로직)
+        if (student.percentiles && student.ranks) {
+            subjects.forEach(subject => {
+                const percentile = student.percentiles[subject.name];
+                const rank = student.ranks[subject.name];
+                if (percentile !== undefined && percentile !== null 
+                    && rank !== undefined && rank !== null && !isNaN(rank)) {
+                    totalPercentilePoints += percentile * subject.credits;
+                    totalCredits += subject.credits;
+                }
+            });
+        }
+    
+        if (totalCredits > 0) {
+            return totalPercentilePoints / totalCredits;
+        }
+    
+        // 2차 폴백: 석차 없이 등급만 있는 경우 (grade-report 양식)
+        // 등급 + 수강자수 기반 백분위 추정
+        if (student.grades) {
+            subjects.forEach(subject => {
+                const grade = student.grades[subject.name];
+                if (grade !== undefined && grade !== null && !isNaN(grade)) {
+                    const subjectTotal = (student.subjectTotals && student.subjectTotals[subject.name])
+                        ? student.subjectTotals[subject.name]
+                        : null;
+                    const estimatedPercentile = this.estimatePercentileFromGrade(grade, subjectTotal);
+                    if (estimatedPercentile !== null) {
+                        totalPercentilePoints += estimatedPercentile * subject.credits;
+                        totalCredits += subject.credits;
+                    }
+                }
+            });
+        }
+    
+        return totalCredits > 0 ? totalPercentilePoints / totalCredits : null;
+    }
+
+    /**
+     * 5등급(석차등급)과 수강자수로부터 백분위를 추정한다.
+     * 
+     * 2022 개정 교육과정 5등급 성취평가제 기준 누적비율:
+     *   A: 상위 ~0%  ~ 누적별도(성취수준별 인원비율은 학교마다 다름)
+     * 
+     * 석차등급(1~5)의 경우, 9등급 누적비율 매핑 기준의 구간 중앙값을 사용한다.
+     * 수강자수가 있으면 해당 등급의 누적비율 중앙에서 좀 더 정밀하게 추정한다.
+     *
+     * @param {number} grade - 석차등급 (1~5 또는 1~9)
+     * @param {number|null} totalStudents - 수강자수 (없으면 null)
+     * @returns {number|null} 추정 백분위 (0~100)
+     */
+    estimatePercentileFromGrade(grade, totalStudents) {
+        if (grade === null || grade === undefined || isNaN(grade)) {
             return null;
         }
-        
-        subjects.forEach(subject => {
-            const percentile = student.percentiles[subject.name];
-            const rank = student.ranks[subject.name];
-            // 석차가 있는 과목만 계산에 포함 (석차 기준으로 백분위 계산했으므로)
-            if (percentile !== undefined && percentile !== null && rank !== undefined && rank !== null && !isNaN(rank)) {
-                totalPercentilePoints += percentile * subject.credits;
-                totalCredits += subject.credits;
-            }
-        });
-        
-        return totalCredits > 0 ? totalPercentilePoints / totalCredits : null;
+
+        // 5등급 체계 (석차등급 1~5)
+        // 각 등급의 백분위 구간 [하한, 상한] 및 중앙값
+        const fiveGradePercentileMap = {
+            1: { lower: 90, upper: 100, mid: 96 },  // 상위 ~10% → 백분위 90~100
+            2: { lower: 70, upper: 90,  mid: 82 },   // 상위 ~30% → 백분위 70~90
+            3: { lower: 40, upper: 70,  mid: 58 },   // 상위 ~60% → 백분위 40~70
+            4: { lower: 10, upper: 40,  mid: 28 },   // 상위 ~90% → 백분위 10~40
+            5: { lower: 0,  upper: 10,  mid: 5 }     // 하위 ~10% → 백분위 0~10
+        };
+
+        const rounded = Math.round(grade);
+        const mapping = fiveGradePercentileMap[rounded];
+    
+        if (!mapping) {
+            // 9등급 체계인 경우 대비
+            return this.convertPercentileTo9Grade 
+                ? null  // 9등급은 별도 처리
+                : null;
+        }
+
+        return mapping.mid;
     }
 
     // 백분위를 9등급으로 환산하는 함수
@@ -821,10 +1454,449 @@ class ScoreAnalyzer {
         return 9;                        // 하위 4%
     }
 
+    getBusanGradeAverageToNineGradeTable() {
+        return [
+            { grade5: 1.00, grade9: 1.62 },
+            { grade5: 1.01, grade9: 1.63 },
+            { grade5: 1.02, grade9: 1.65 },
+            { grade5: 1.03, grade9: 1.66 },
+            { grade5: 1.04, grade9: 1.68 },
+            { grade5: 1.05, grade9: 1.69 },
+            { grade5: 1.06, grade9: 1.71 },
+            { grade5: 1.07, grade9: 1.72 },
+            { grade5: 1.08, grade9: 1.74 },
+            { grade5: 1.09, grade9: 1.75 },
+            { grade5: 1.10, grade9: 1.77 },
+            { grade5: 1.11, grade9: 1.78 },
+            { grade5: 1.12, grade9: 1.80 },
+            { grade5: 1.13, grade9: 1.81 },
+            { grade5: 1.14, grade9: 1.83 },
+            { grade5: 1.15, grade9: 1.84 },
+            { grade5: 1.16, grade9: 1.86 },
+            { grade5: 1.17, grade9: 1.87 },
+            { grade5: 1.18, grade9: 1.89 },
+            { grade5: 1.19, grade9: 1.90 },
+            { grade5: 1.20, grade9: 1.92 },
+            { grade5: 1.21, grade9: 1.93 },
+            { grade5: 1.22, grade9: 1.95 },
+            { grade5: 1.23, grade9: 1.96 },
+            { grade5: 1.24, grade9: 1.98 },
+            { grade5: 1.25, grade9: 1.99 },
+            { grade5: 1.26, grade9: 2.01 },
+            { grade5: 1.27, grade9: 2.02 },
+            { grade5: 1.28, grade9: 2.04 },
+            { grade5: 1.29, grade9: 2.05 },
+            { grade5: 1.30, grade9: 2.07 },
+            { grade5: 1.31, grade9: 2.08 },
+            { grade5: 1.32, grade9: 2.10 },
+            { grade5: 1.33, grade9: 2.11 },
+            { grade5: 1.34, grade9: 2.13 },
+            { grade5: 1.35, grade9: 2.14 },
+            { grade5: 1.36, grade9: 2.16 },
+            { grade5: 1.37, grade9: 2.17 },
+            { grade5: 1.38, grade9: 2.19 },
+            { grade5: 1.39, grade9: 2.20 },
+            { grade5: 1.40, grade9: 2.22 },
+            { grade5: 1.41, grade9: 2.23 },
+            { grade5: 1.42, grade9: 2.25 },
+            { grade5: 1.43, grade9: 2.26 },
+            { grade5: 1.44, grade9: 2.28 },
+            { grade5: 1.45, grade9: 2.29 },
+            { grade5: 1.46, grade9: 2.31 },
+            { grade5: 1.47, grade9: 2.32 },
+            { grade5: 1.48, grade9: 2.34 },
+            { grade5: 1.49, grade9: 2.35 },
+            { grade5: 1.50, grade9: 2.37 },
+            { grade5: 1.51, grade9: 2.38 },
+            { grade5: 1.52, grade9: 2.40 },
+            { grade5: 1.53, grade9: 2.42 },
+            { grade5: 1.54, grade9: 2.44 },
+            { grade5: 1.55, grade9: 2.46 },
+            { grade5: 1.56, grade9: 2.47 },
+            { grade5: 1.57, grade9: 2.49 },
+            { grade5: 1.58, grade9: 2.51 },
+            { grade5: 1.59, grade9: 2.53 },
+            { grade5: 1.60, grade9: 2.55 },
+            { grade5: 1.61, grade9: 2.57 },
+            { grade5: 1.62, grade9: 2.59 },
+            { grade5: 1.63, grade9: 2.61 },
+            { grade5: 1.64, grade9: 2.63 },
+            { grade5: 1.65, grade9: 2.65 },
+            { grade5: 1.66, grade9: 2.66 },
+            { grade5: 1.67, grade9: 2.68 },
+            { grade5: 1.68, grade9: 2.70 },
+            { grade5: 1.69, grade9: 2.72 },
+            { grade5: 1.70, grade9: 2.74 },
+            { grade5: 1.71, grade9: 2.76 },
+            { grade5: 1.72, grade9: 2.78 },
+            { grade5: 1.73, grade9: 2.80 },
+            { grade5: 1.74, grade9: 2.82 },
+            { grade5: 1.75, grade9: 2.84 },
+            { grade5: 1.76, grade9: 2.85 },
+            { grade5: 1.77, grade9: 2.87 },
+            { grade5: 1.78, grade9: 2.89 },
+            { grade5: 1.79, grade9: 2.91 },
+            { grade5: 1.80, grade9: 2.93 },
+            { grade5: 1.81, grade9: 2.95 },
+            { grade5: 1.82, grade9: 2.97 },
+            { grade5: 1.83, grade9: 2.99 },
+            { grade5: 1.84, grade9: 3.01 },
+            { grade5: 1.85, grade9: 3.03 },
+            { grade5: 1.86, grade9: 3.04 },
+            { grade5: 1.87, grade9: 3.06 },
+            { grade5: 1.88, grade9: 3.08 },
+            { grade5: 1.89, grade9: 3.10 },
+            { grade5: 1.90, grade9: 3.12 },
+            { grade5: 1.91, grade9: 3.14 },
+            { grade5: 1.92, grade9: 3.16 },
+            { grade5: 1.93, grade9: 3.18 },
+            { grade5: 1.94, grade9: 3.20 },
+            { grade5: 1.95, grade9: 3.22 },
+            { grade5: 1.96, grade9: 3.23 },
+            { grade5: 1.97, grade9: 3.25 },
+            { grade5: 1.98, grade9: 3.27 },
+            { grade5: 1.99, grade9: 3.29 },
+            { grade5: 2.00, grade9: 3.31 },
+            { grade5: 2.01, grade9: 3.32 },
+            { grade5: 2.02, grade9: 3.34 },
+            { grade5: 2.03, grade9: 3.35 },
+            { grade5: 2.04, grade9: 3.37 },
+            { grade5: 2.05, grade9: 3.38 },
+            { grade5: 2.06, grade9: 3.40 },
+            { grade5: 2.07, grade9: 3.41 },
+            { grade5: 2.08, grade9: 3.43 },
+            { grade5: 2.09, grade9: 3.44 },
+            { grade5: 2.10, grade9: 3.46 },
+            { grade5: 2.11, grade9: 3.47 },
+            { grade5: 2.12, grade9: 3.49 },
+            { grade5: 2.13, grade9: 3.50 },
+            { grade5: 2.14, grade9: 3.52 },
+            { grade5: 2.15, grade9: 3.53 },
+            { grade5: 2.16, grade9: 3.55 },
+            { grade5: 2.17, grade9: 3.56 },
+            { grade5: 2.18, grade9: 3.58 },
+            { grade5: 2.19, grade9: 3.59 },
+            { grade5: 2.20, grade9: 3.61 },
+            { grade5: 2.21, grade9: 3.62 },
+            { grade5: 2.22, grade9: 3.64 },
+            { grade5: 2.23, grade9: 3.65 },
+            { grade5: 2.24, grade9: 3.67 },
+            { grade5: 2.25, grade9: 3.68 },
+            { grade5: 2.26, grade9: 3.70 },
+            { grade5: 2.27, grade9: 3.71 },
+            { grade5: 2.28, grade9: 3.73 },
+            { grade5: 2.29, grade9: 3.74 },
+            { grade5: 2.30, grade9: 3.76 },
+            { grade5: 2.31, grade9: 3.77 },
+            { grade5: 2.32, grade9: 3.79 },
+            { grade5: 2.33, grade9: 3.80 },
+            { grade5: 2.34, grade9: 3.82 },
+            { grade5: 2.35, grade9: 3.83 },
+            { grade5: 2.36, grade9: 3.85 },
+            { grade5: 2.37, grade9: 3.86 },
+            { grade5: 2.38, grade9: 3.88 },
+            { grade5: 2.39, grade9: 3.89 },
+            { grade5: 2.40, grade9: 3.91 },
+            { grade5: 2.41, grade9: 3.92 },
+            { grade5: 2.42, grade9: 3.94 },
+            { grade5: 2.43, grade9: 3.95 },
+            { grade5: 2.44, grade9: 3.97 },
+            { grade5: 2.45, grade9: 3.98 },
+            { grade5: 2.46, grade9: 4.00 },
+            { grade5: 2.47, grade9: 4.01 },
+            { grade5: 2.48, grade9: 4.03 },
+            { grade5: 2.49, grade9: 4.04 },
+            { grade5: 2.50, grade9: 4.06 },
+            { grade5: 2.51, grade9: 4.07 },
+            { grade5: 2.52, grade9: 4.09 },
+            { grade5: 2.53, grade9: 4.10 },
+            { grade5: 2.54, grade9: 4.12 },
+            { grade5: 2.55, grade9: 4.14 },
+            { grade5: 2.56, grade9: 4.15 },
+            { grade5: 2.57, grade9: 4.17 },
+            { grade5: 2.58, grade9: 4.19 },
+            { grade5: 2.59, grade9: 4.20 },
+            { grade5: 2.60, grade9: 4.22 },
+            { grade5: 2.61, grade9: 4.24 },
+            { grade5: 2.62, grade9: 4.25 },
+            { grade5: 2.63, grade9: 4.27 },
+            { grade5: 2.64, grade9: 4.28 },
+            { grade5: 2.65, grade9: 4.30 },
+            { grade5: 2.66, grade9: 4.32 },
+            { grade5: 2.67, grade9: 4.33 },
+            { grade5: 2.68, grade9: 4.35 },
+            { grade5: 2.69, grade9: 4.37 },
+            { grade5: 2.70, grade9: 4.38 },
+            { grade5: 2.71, grade9: 4.40 },
+            { grade5: 2.72, grade9: 4.42 },
+            { grade5: 2.73, grade9: 4.43 },
+            { grade5: 2.74, grade9: 4.45 },
+            { grade5: 2.75, grade9: 4.47 },
+            { grade5: 2.76, grade9: 4.48 },
+            { grade5: 2.77, grade9: 4.50 },
+            { grade5: 2.78, grade9: 4.52 },
+            { grade5: 2.79, grade9: 4.53 },
+            { grade5: 2.80, grade9: 4.55 },
+            { grade5: 2.81, grade9: 4.57 },
+            { grade5: 2.82, grade9: 4.58 },
+            { grade5: 2.83, grade9: 4.60 },
+            { grade5: 2.84, grade9: 4.62 },
+            { grade5: 2.85, grade9: 4.63 },
+            { grade5: 2.86, grade9: 4.65 },
+            { grade5: 2.87, grade9: 4.67 },
+            { grade5: 2.88, grade9: 4.68 },
+            { grade5: 2.89, grade9: 4.70 },
+            { grade5: 2.90, grade9: 4.71 },
+            { grade5: 2.91, grade9: 4.73 },
+            { grade5: 2.92, grade9: 4.75 },
+            { grade5: 2.93, grade9: 4.76 },
+            { grade5: 2.94, grade9: 4.78 },
+            { grade5: 2.95, grade9: 4.80 },
+            { grade5: 2.96, grade9: 4.81 },
+            { grade5: 2.97, grade9: 4.83 },
+            { grade5: 2.98, grade9: 4.85 },
+            { grade5: 2.99, grade9: 4.86 },
+            { grade5: 3.00, grade9: 4.88 },
+            { grade5: 3.01, grade9: 4.89 },
+            { grade5: 3.02, grade9: 4.90 },
+            { grade5: 3.03, grade9: 4.92 },
+            { grade5: 3.04, grade9: 4.93 },
+            { grade5: 3.05, grade9: 4.94 },
+            { grade5: 3.06, grade9: 4.96 },
+            { grade5: 3.07, grade9: 4.97 },
+            { grade5: 3.08, grade9: 4.98 },
+            { grade5: 3.09, grade9: 5.00 },
+            { grade5: 3.10, grade9: 5.01 },
+            { grade5: 3.11, grade9: 5.02 },
+            { grade5: 3.12, grade9: 5.04 },
+            { grade5: 3.13, grade9: 5.05 },
+            { grade5: 3.14, grade9: 5.06 },
+            { grade5: 3.15, grade9: 5.08 },
+            { grade5: 3.16, grade9: 5.09 },
+            { grade5: 3.17, grade9: 5.10 },
+            { grade5: 3.18, grade9: 5.12 },
+            { grade5: 3.19, grade9: 5.13 },
+            { grade5: 3.20, grade9: 5.14 },
+            { grade5: 3.21, grade9: 5.16 },
+            { grade5: 3.22, grade9: 5.17 },
+            { grade5: 3.23, grade9: 5.18 },
+            { grade5: 3.24, grade9: 5.20 },
+            { grade5: 3.25, grade9: 5.21 },
+            { grade5: 3.26, grade9: 5.22 },
+            { grade5: 3.27, grade9: 5.23 },
+            { grade5: 3.28, grade9: 5.25 },
+            { grade5: 3.29, grade9: 5.26 },
+            { grade5: 3.30, grade9: 5.27 },
+            { grade5: 3.31, grade9: 5.29 },
+            { grade5: 3.32, grade9: 5.30 },
+            { grade5: 3.33, grade9: 5.31 },
+            { grade5: 3.34, grade9: 5.33 },
+            { grade5: 3.35, grade9: 5.34 },
+            { grade5: 3.36, grade9: 5.35 },
+            { grade5: 3.37, grade9: 5.37 },
+            { grade5: 3.38, grade9: 5.38 },
+            { grade5: 3.39, grade9: 5.39 },
+            { grade5: 3.40, grade9: 5.41 },
+            { grade5: 3.41, grade9: 5.42 },
+            { grade5: 3.42, grade9: 5.43 },
+            { grade5: 3.43, grade9: 5.45 },
+            { grade5: 3.44, grade9: 5.46 },
+            { grade5: 3.45, grade9: 5.47 },
+            { grade5: 3.46, grade9: 5.49 },
+            { grade5: 3.47, grade9: 5.50 },
+            { grade5: 3.48, grade9: 5.51 },
+            { grade5: 3.49, grade9: 5.53 },
+            { grade5: 3.50, grade9: 5.54 },
+            { grade5: 3.51, grade9: 5.55 },
+            { grade5: 3.52, grade9: 5.57 },
+            { grade5: 3.53, grade9: 5.58 },
+            { grade5: 3.54, grade9: 5.60 },
+            { grade5: 3.55, grade9: 5.62 },
+            { grade5: 3.56, grade9: 5.64 },
+            { grade5: 3.57, grade9: 5.65 },
+            { grade5: 3.58, grade9: 5.67 },
+            { grade5: 3.59, grade9: 5.69 },
+            { grade5: 3.60, grade9: 5.71 },
+            { grade5: 3.61, grade9: 5.72 },
+            { grade5: 3.62, grade9: 5.74 },
+            { grade5: 3.63, grade9: 5.76 },
+            { grade5: 3.64, grade9: 5.78 },
+            { grade5: 3.65, grade9: 5.79 },
+            { grade5: 3.66, grade9: 5.81 },
+            { grade5: 3.67, grade9: 5.83 },
+            { grade5: 3.68, grade9: 5.84 },
+            { grade5: 3.69, grade9: 5.86 },
+            { grade5: 3.70, grade9: 5.88 },
+            { grade5: 3.71, grade9: 5.90 },
+            { grade5: 3.72, grade9: 5.91 },
+            { grade5: 3.73, grade9: 5.93 },
+            { grade5: 3.74, grade9: 5.95 },
+            { grade5: 3.75, grade9: 5.97 },
+            { grade5: 3.76, grade9: 5.98 },
+            { grade5: 3.77, grade9: 6.00 },
+            { grade5: 3.78, grade9: 6.02 },
+            { grade5: 3.79, grade9: 6.04 },
+            { grade5: 3.80, grade9: 6.05 },
+            { grade5: 3.81, grade9: 6.07 },
+            { grade5: 3.82, grade9: 6.09 },
+            { grade5: 3.83, grade9: 6.11 },
+            { grade5: 3.84, grade9: 6.12 },
+            { grade5: 3.85, grade9: 6.14 },
+            { grade5: 3.86, grade9: 6.16 },
+            { grade5: 3.87, grade9: 6.17 },
+            { grade5: 3.88, grade9: 6.19 },
+            { grade5: 3.89, grade9: 6.21 },
+            { grade5: 3.90, grade9: 6.23 },
+            { grade5: 3.91, grade9: 6.24 },
+            { grade5: 3.92, grade9: 6.26 },
+            { grade5: 3.93, grade9: 6.28 },
+            { grade5: 3.94, grade9: 6.30 },
+            { grade5: 3.95, grade9: 6.31 },
+            { grade5: 3.96, grade9: 6.33 },
+            { grade5: 3.97, grade9: 6.35 },
+            { grade5: 3.98, grade9: 6.37 },
+            { grade5: 3.99, grade9: 6.38 },
+            { grade5: 4.00, grade9: 6.40 },
+            { grade5: 4.01, grade9: 6.41 },
+            { grade5: 4.02, grade9: 6.42 },
+            { grade5: 4.03, grade9: 6.44 },
+            { grade5: 4.04, grade9: 6.45 },
+            { grade5: 4.05, grade9: 6.47 },
+            { grade5: 4.06, grade9: 6.48 },
+            { grade5: 4.07, grade9: 6.50 },
+            { grade5: 4.08, grade9: 6.51 },
+            { grade5: 4.09, grade9: 6.52 },
+            { grade5: 4.10, grade9: 6.54 },
+            { grade5: 4.11, grade9: 6.55 },
+            { grade5: 4.12, grade9: 6.57 },
+            { grade5: 4.13, grade9: 6.58 },
+            { grade5: 4.14, grade9: 6.60 },
+            { grade5: 4.15, grade9: 6.61 },
+            { grade5: 4.16, grade9: 6.62 },
+            { grade5: 4.17, grade9: 6.64 },
+            { grade5: 4.18, grade9: 6.65 },
+            { grade5: 4.19, grade9: 6.67 },
+            { grade5: 4.20, grade9: 6.68 },
+            { grade5: 4.21, grade9: 6.70 },
+            { grade5: 4.22, grade9: 6.71 },
+            { grade5: 4.23, grade9: 6.72 },
+            { grade5: 4.24, grade9: 6.74 },
+            { grade5: 4.25, grade9: 6.75 },
+            { grade5: 4.26, grade9: 6.77 },
+            { grade5: 4.27, grade9: 6.78 },
+            { grade5: 4.28, grade9: 6.80 },
+            { grade5: 4.29, grade9: 6.81 },
+            { grade5: 4.30, grade9: 6.82 },
+            { grade5: 4.31, grade9: 6.84 },
+            { grade5: 4.32, grade9: 6.85 },
+            { grade5: 4.33, grade9: 6.87 },
+            { grade5: 4.34, grade9: 6.88 },
+            { grade5: 4.35, grade9: 6.90 },
+            { grade5: 4.36, grade9: 6.91 },
+            { grade5: 4.37, grade9: 6.92 },
+            { grade5: 4.38, grade9: 6.94 },
+            { grade5: 4.39, grade9: 6.95 },
+            { grade5: 4.40, grade9: 6.97 },
+            { grade5: 4.41, grade9: 6.98 },
+            { grade5: 4.42, grade9: 7.00 },
+            { grade5: 4.43, grade9: 7.01 },
+            { grade5: 4.44, grade9: 7.02 },
+            { grade5: 4.45, grade9: 7.04 },
+            { grade5: 4.46, grade9: 7.05 },
+            { grade5: 4.47, grade9: 7.07 },
+            { grade5: 4.48, grade9: 7.08 },
+            { grade5: 4.49, grade9: 7.10 },
+            { grade5: 4.50, grade9: 7.11 },
+            { grade5: 4.51, grade9: 7.12 },
+            { grade5: 4.52, grade9: 7.16 },
+            { grade5: 4.53, grade9: 7.20 },
+            { grade5: 4.54, grade9: 7.24 },
+            { grade5: 4.55, grade9: 7.27 },
+            { grade5: 4.56, grade9: 7.31 },
+            { grade5: 4.57, grade9: 7.35 },
+            { grade5: 4.58, grade9: 7.39 },
+            { grade5: 4.59, grade9: 7.43 },
+            { grade5: 4.60, grade9: 7.47 },
+            { grade5: 4.61, grade9: 7.50 },
+            { grade5: 4.62, grade9: 7.54 },
+            { grade5: 4.63, grade9: 7.58 },
+            { grade5: 4.64, grade9: 7.62 },
+            { grade5: 4.65, grade9: 7.66 },
+            { grade5: 4.66, grade9: 7.70 },
+            { grade5: 4.67, grade9: 7.73 },
+            { grade5: 4.68, grade9: 7.77 },
+            { grade5: 4.69, grade9: 7.81 },
+            { grade5: 4.70, grade9: 7.85 },
+            { grade5: 4.71, grade9: 7.89 },
+            { grade5: 4.72, grade9: 7.93 },
+            { grade5: 4.73, grade9: 7.96 },
+            { grade5: 4.74, grade9: 8.00 },
+            { grade5: 4.75, grade9: 8.04 },
+            { grade5: 4.76, grade9: 8.08 },
+            { grade5: 4.77, grade9: 8.12 },
+            { grade5: 4.78, grade9: 8.16 },
+            { grade5: 4.79, grade9: 8.19 },
+            { grade5: 4.80, grade9: 8.23 },
+            { grade5: 4.81, grade9: 8.27 },
+            { grade5: 4.82, grade9: 8.31 },
+            { grade5: 4.83, grade9: 8.35 },
+            { grade5: 4.84, grade9: 8.39 },
+            { grade5: 4.85, grade9: 8.42 },
+            { grade5: 4.86, grade9: 8.46 },
+            { grade5: 4.87, grade9: 8.50 },
+            { grade5: 4.88, grade9: 8.54 },
+            { grade5: 4.89, grade9: 8.58 },
+            { grade5: 4.90, grade9: 8.62 },
+            { grade5: 4.91, grade9: 8.65 },
+            { grade5: 4.92, grade9: 8.69 },
+            { grade5: 4.93, grade9: 8.73 },
+            { grade5: 4.94, grade9: 8.77 },
+            { grade5: 4.95, grade9: 8.81 },
+            { grade5: 4.96, grade9: 8.85 },
+            { grade5: 4.97, grade9: 8.88 },
+            { grade5: 4.98, grade9: 8.92 },
+            { grade5: 4.99, grade9: 8.96 },
+            { grade5: 5.00, grade9: 9.00 }
+        ];
+    }
+
+    estimateNineGradeAverageFromFiveGradeAverage(gradeAverage) {
+        if (gradeAverage === null || gradeAverage === undefined || isNaN(gradeAverage)) {
+            return null;
+        }
+
+        const table = this.getBusanGradeAverageToNineGradeTable();
+        if (table.length === 0) return null;
+
+        if (gradeAverage <= table[0].grade5) {
+            return table[0].grade9;
+        }
+
+        const lastPoint = table[table.length - 1];
+        if (gradeAverage >= lastPoint.grade5) {
+            return lastPoint.grade9;
+        }
+
+        for (let i = 1; i < table.length; i++) {
+            const prev = table[i - 1];
+            const next = table[i];
+
+            if (gradeAverage === next.grade5) {
+                return next.grade9;
+            }
+
+            if (gradeAverage < next.grade5) {
+                const ratio = (gradeAverage - prev.grade5) / (next.grade5 - prev.grade5);
+                return prev.grade9 + ((next.grade9 - prev.grade9) * ratio);
+            }
+        }
+
+        return lastPoint.grade9;
+    }
+
     // (제거됨) 5등급 기반 9등급 하한 강제 로직은 오류 탐지 가시성을 해치므로 사용하지 않음
 
-    // 9등급 가중평균 계산
-    calculateWeightedAverage9Grade(student, subjects) {
+    calculateExactWeightedAverage9Grade(student, subjects) {
         let totalGradePoints = 0;
         let totalCredits = 0;
         
@@ -849,12 +1921,45 @@ class ScoreAnalyzer {
         return totalCredits > 0 ? totalGradePoints / totalCredits : null;
     }
 
+    // 9등급 가중평균 계산
+    calculateWeightedAverage9Grade(student, subjects) {
+        const exactWeightedAverage9Grade = this.calculateExactWeightedAverage9Grade(student, subjects);
+        if (exactWeightedAverage9Grade !== null) {
+            return exactWeightedAverage9Grade;
+        }
+
+        const isGradeReportSource = student &&
+            (student.hasGradeReportSource || student.sourceFormat === 'grade-report');
+
+        if (!isGradeReportSource) {
+            return null;
+        }
+
+        return this.estimateNineGradeAverageFromFiveGradeAverage(student.weightedAverageGrade);
+    }
+
+    usesBusanNineGradeReference(student, subjects) {
+        if (!student || student.weightedAverage9Grade === null || student.weightedAverage9Grade === undefined) {
+            return false;
+        }
+
+        const isGradeReportSource = student.hasGradeReportSource || student.sourceFormat === 'grade-report';
+        if (!isGradeReportSource) {
+            return false;
+        }
+
+        return this.calculateExactWeightedAverage9Grade(student, subjects) === null;
+    }
+
 
     displayResults() {
         document.getElementById('results').style.display = 'block';
         this.displaySubjectAverages();
         this.displayGradeAnalysis();
         this.displayStudentAnalysis();
+        if (document.querySelector('[data-tab="subjects"]') && document.getElementById('subjects-tab')) {
+            this.switchTab('subjects');
+        }
     }
 
     // Export a complete deployment package with all files
@@ -964,7 +2069,7 @@ class ScoreAnalyzer {
         <div id="error" class="error-message" style="display:none;"></div>
         <footer class="app-footer">
             <div class="footer-right">
-                <div class="credits">Edited by IRONMIN (Jeonju high school) / Made by NAMGUNG YEON (Seolak high school)</div>
+                <div class="credits">2026 강원진학센터 입시분석팀 남궁연(강원 설악고등학교)</div>
                 <a class="help-btn" href="https://namgungyeon.tistory.com/133" target="_blank" rel="noopener" title="도움말 보기">❔ 도움말</a>
             </div>
         </footer>
@@ -996,7 +2101,7 @@ class ScoreAnalyzer {
                 "- index.html: 메인 페이지 (CSS 내장)\\n" +
                 "- style.css: 별도 스타일 파일 (참고용)\\n" +
                 "- script.js: 분석 스크립트\\n\\n" +
-                "Edited by IRONMIN (Jeonju high school) / Made by NAMGUNG YEON (Seolak high school)\\n" +
+                "2026 강원진학센터 입시분석팀 남궁연(강원 설악고등학교)\\n" +
                 "링크: https://namgungyeon.tistory.com/133"
             );
             
@@ -1017,7 +2122,7 @@ class ScoreAnalyzer {
             setTimeout(() => this.downloadFile(cssContent, "style.css", "text/css"), 500);
             setTimeout(() => this.downloadFile(jsContent, "script.js", "application/javascript"), 1000);
             setTimeout(() => {
-                const readme = "배포용 성적 분석 뷰어\\n========================\\n\\n사용법:\\n1. 모든 파일을 같은 폴더에 저장하세요\\n2. index.html 파일을 웹브라우저에서 열어주세요\\n\\nMade by NAMGUNG YEON (Seolak high school)\\n링크: https://namgungyeon.tistory.com/133";
+                const readme = "배포용 성적 분석 뷰어\\n========================\\n\\n사용법:\\n1. 모든 파일을 같은 폴더에 저장하세요\\n2. index.html 파일을 웹브라우저에서 열어주세요\\n\\n2026 강원진학센터 입시분석팀 남궁연(강원 설악고등학교)\\n링크: https://namgungyeon.tistory.com/133";
                 this.downloadFile(readme, "README.txt", "text/plain");
             }, 1500);
             
@@ -1104,59 +2209,43 @@ class ScoreAnalyzer {
         return;
     }
 
-    // 현재 화면 상태 그대로(차트 포함) 정적인 HTML로 저장
-    async exportAsExactSnapshotHtml() {
-        if (!this.combinedData) {
-            this.showError('먼저 파일을 분석하세요.');
-            return;
-        }
+    async generateExactSnapshotHtmlTemplate() {
+        // 차트가 모두 그려지도록 보장 (애니메이션 없이 최신 상태로 업데이트)
+        await this.ensureChartsRendered();
+        // 렌더 안정화 대기(레이아웃/폰트/애니메이션 마무리)
+        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+        await new Promise(r => setTimeout(r, 200));
 
-        try {
-            // 차트가 모두 그려지도록 보장 (애니메이션 없이 최신 상태로 업데이트)
-            await this.ensureChartsRendered();
-            // 렌더 안정화 대기(레이아웃/폰트/애니메이션 마무리)
-            await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-            await new Promise(r => setTimeout(r, 200));
-            // 1) 스타일 수집 (style.css 우선)
-            const cssContent = await this.getStyleCSS();
+        const cssContent = await this.getStyleCSS();
+        const container = document.querySelector('.container');
+        if (!container) throw new Error('내보낼 컨테이너를 찾을 수 없습니다.');
 
-            // 2) .container 복제
-            const container = document.querySelector('.container');
-            if (!container) throw new Error('내보낼 컨테이너를 찾을 수 없습니다.');
-            const containerClone = container.cloneNode(true);
+        const containerClone = container.cloneNode(true);
+        const origCanvases = container.querySelectorAll('canvas');
+        const cloneCanvases = containerClone.querySelectorAll('canvas');
 
-            // 3) 캔버스를 이미지로 교체 (현재 그려진 차트를 보존)
-            const origCanvases = container.querySelectorAll('canvas');
-            const cloneCanvases = containerClone.querySelectorAll('canvas');
-            for (let i = 0; i < cloneCanvases.length; i++) {
-                const srcCanvas = origCanvases[i];
-                const dstCanvas = cloneCanvases[i];
-                if (srcCanvas && dstCanvas && srcCanvas.toDataURL) {
-                    try {
-                        const img = document.createElement('img');
-                        img.src = srcCanvas.toDataURL('image/png');
-                        // 크기 보존: CSS 렌더 크기 기준
-                        const rect = srcCanvas.getBoundingClientRect();
-                        img.style.width = Math.max(1, Math.round(rect.width)) + 'px';
-                        img.style.height = Math.max(1, Math.round(rect.height)) + 'px';
-                        // 클래스/아이디 유지 (스타일 영향 최소화)
-                        img.className = dstCanvas.className || '';
-                        if (dstCanvas.id) img.id = dstCanvas.id;
-                        // 접근성 대체 텍스트
-                        img.alt = dstCanvas.getAttribute('aria-label') || 'chart-image';
-                        dstCanvas.replaceWith(img);
-                    } catch (_) {
-                        // 실패 시 캔버스 그대로 두기
-                    }
+        for (let i = 0; i < cloneCanvases.length; i++) {
+            const srcCanvas = origCanvases[i];
+            const dstCanvas = cloneCanvases[i];
+            if (srcCanvas && dstCanvas && srcCanvas.toDataURL) {
+                try {
+                    const img = document.createElement('img');
+                    img.src = srcCanvas.toDataURL('image/png');
+                    const rect = srcCanvas.getBoundingClientRect();
+                    img.style.width = Math.max(1, Math.round(rect.width)) + 'px';
+                    img.style.height = Math.max(1, Math.round(rect.height)) + 'px';
+                    img.className = dstCanvas.className || '';
+                    if (dstCanvas.id) img.id = dstCanvas.id;
+                    img.alt = dstCanvas.getAttribute('aria-label') || 'chart-image';
+                    dstCanvas.replaceWith(img);
+                } catch (_) {
+                    // 실패 시 캔버스 그대로 둔다.
                 }
             }
+        }
 
-            // 4) 불필요한 인터랙션 제거 (input/버튼은 그대로 두되 비활성화 옵션 가능)
-            // 여기서는 모양 보존이 목적이므로 구조만 유지
-
-            // 5) 최종 HTML 구성 (외부 스크립트/링크 제거하고 CSS는 인라인)
-            const title = document.title || '2025학년도 전주고등학교 1학년 내신 성적 분석 결과';
-            const html = `<!DOCTYPE html>
+        const title = document.title || '(2022개정) 고등학교 내신 분석 프로그램 Lite';
+        return `<!DOCTYPE html>
 <html lang="ko">
 <head>
   <meta charset="UTF-8">
@@ -1170,8 +2259,19 @@ ${cssContent}
 ${containerClone.outerHTML}
 </body>
 </html>`;
+    }
 
-            // 6) 다운로드 (BOM 포함: 한글 표시 안전)
+    // 현재 화면 상태 그대로(차트 포함) 정적인 HTML로 저장
+    async exportAsExactSnapshotHtml() {
+        if (!this.combinedData) {
+            this.showError('먼저 파일을 분석하세요.');
+            return;
+        }
+
+        try {
+            const html = await this.generateExactSnapshotHtmlTemplate();
+
+            // 다운로드 (BOM 포함: 한글 표시 안전)
             const BOM = '\uFEFF';
             const blob = new Blob([BOM + html], { type: 'text/html;charset=utf-8;' });
             const url = URL.createObjectURL(blob);
@@ -1226,8 +2326,75 @@ ${containerClone.outerHTML}
     }
 
     getFallbackCSS() {
-        // CSS 로드가 실패했을 때 사용할 기본 스타일
-        return `
+        // CSS 로드가 실패했을 때 사용할 기본 스타일 (style.css와 동기화됨)
+        return `/* ========================================
+   Modern Clean Theme
+   ======================================== */
+
+:root {
+    --primary: #5F4A8B;
+    --primary-light: #7B62A8;
+    --primary-dark: #483670;
+    --primary-bg: rgba(95, 74, 139, 0.08);
+
+    --accent: #7B62A8;
+    --accent-light: #9578C4;
+    --accent-muted: #E8E0F4;
+    --accent-bg: rgba(123, 98, 168, 0.08);
+
+    --neutral-50: #FCFCFD;
+    --neutral-100: #F8F7FA;
+    --neutral-200: #EEEDF2;
+    --neutral-300: #DDDBE5;
+    --neutral-400: #B8B4C4;
+    --neutral-500: #7E7891;
+    --neutral-600: #585269;
+    --neutral-700: #36314A;
+    --neutral-800: #1A1626;
+
+    --success: #15803D;
+    --success-light: #16A34A;
+    --success-bg: rgba(21, 128, 61, 0.1);
+
+    --info: #2563EB;
+    --info-light: #3B82F6;
+    --info-bg: rgba(37, 99, 235, 0.1);
+
+    --warning: #D97706;
+    --warning-light: #F59E0B;
+    --warning-bg: rgba(217, 119, 6, 0.12);
+
+    --bg-body: radial-gradient(circle at top, #FFFFFF 0%, #F6F5F9 42%, #EEEDF2 100%);
+    --bg-card: #FFFFFF;
+    --bg-card-hover: #FFFFFF;
+    --bg-section: linear-gradient(180deg, #FFFFFF 0%, #F8F7FA 100%);
+
+    --text-primary: #1A1626;
+    --text-secondary: #585269;
+    --text-muted: #7E7891;
+    --text-inverse: #FFFFFF;
+
+    --border-light: rgba(95, 74, 139, 0.08);
+    --border-medium: rgba(95, 74, 139, 0.14);
+    --border-accent: rgba(95, 74, 139, 0.18);
+
+    --shadow-sm: 0 1px 2px rgba(95, 74, 139, 0.06);
+    --shadow-md: 0 8px 24px rgba(95, 74, 139, 0.08);
+    --shadow-lg: 0 16px 36px rgba(95, 74, 139, 0.10);
+    --shadow-xl: 0 24px 64px rgba(95, 74, 139, 0.12);
+
+    --radius-sm: 10px;
+    --radius-md: 14px;
+    --radius-lg: 20px;
+    --radius-xl: 28px;
+
+    --grade-1: #15803D;
+    --grade-2: #5F4A8B;
+    --grade-3: #0369A1;
+    --grade-4: #D97706;
+    --grade-5: #7E7891;
+}
+
 * {
     margin: 0;
     padding: 0;
@@ -1235,60 +2402,429 @@ ${containerClone.outerHTML}
 }
 
 body {
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    background: linear-gradient(180deg, #f7f9fc 0%, #eef2f7 100%);
+    font-family: 'Pretendard Variable', 'Pretendard', 'SUIT Variable', 'Noto Sans KR', sans-serif;
+    background: var(--bg-body);
     min-height: 100vh;
-    padding: 20px;
+    padding: 18px;
+    position: relative;
+    overflow-x: hidden;
+    color: var(--text-primary);
 }
 
 .container {
-    max-width: 1200px;
+    max-width: 1320px;
     margin: 0 auto;
-    background: white;
-    border-radius: 15px;
-    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+    background: var(--bg-card);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-xl);
     overflow: hidden;
+    position: relative;
+    border: 1px solid var(--border-light);
 }
 
 header {
-    background: #8fbaf7;
-    color: white;
-    padding: 40px;
+    background: linear-gradient(135deg, #5F4A8B 0%, #483670 50%, #36314A 100%);
+    color: var(--text-inverse);
+    padding: 40px 36px 36px;
     text-align: center;
+    border-bottom: none;
+    position: relative;
+    overflow: hidden;
+}
+
+header::before {
+    content: '✦';
+    position: absolute;
+    top: 16px;
+    right: 24px;
+    font-size: 1.5rem;
+    opacity: 0.3;
+    color: #FFFFFF;
 }
 
 header h1 {
-    font-size: 2.5rem;
-    margin-bottom: 10px;
-    font-weight: 300;
+    font-size: 2rem;
+    margin-bottom: 6px;
+    font-weight: 600;
+    letter-spacing: -0.04em;
+    position: relative;
+    color: #FFFFFF;
+}
+
+.header-subtitle {
+    font-size: 1rem;
+    color: rgba(255, 255, 255, 0.85);
+    max-width: 720px;
+    line-height: 1.6;
+    margin: 0 auto;
+}
+
+.badge-lite {
+    display: inline-block;
+    margin-left: 10px;
+    padding: 4px 10px;
+    font-size: 0.74rem;
+    font-weight: 600;
+    color: #FFFFFF;
+    background: rgba(255, 255, 255, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.4);
+    border-radius: 999px;
+    letter-spacing: 0.08em;
+    vertical-align: middle;
+    text-transform: uppercase;
+}
+
+.upload-section {
+    padding: 32px 36px;
+    text-align: center;
+    border-bottom: 1px solid var(--neutral-200);
+    position: relative;
+    background: linear-gradient(180deg, var(--neutral-50) 0%, var(--bg-card) 100%);
+}
+
+.container.post-analysis .upload-guide,
+.container.post-analysis .section-divider,
+.container.post-analysis .file-input-wrapper,
+.container.post-analysis #fileList,
+.container.post-analysis #analyzeBtn {
+    display: none !important;
+}
+
+.file-input-wrapper {
+    margin-bottom: 30px;
+}
+
+.file-input-wrapper input[type="file"] {
+    display: none;
+}
+
+.file-input-label {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: min(100%, 720px);
+    min-height: 88px;
+    margin: 0 auto;
+    padding: 18px 28px;
+    background: var(--bg-card);
+    border: 1.5px dashed var(--neutral-300);
+    border-radius: var(--radius-lg);
+    cursor: pointer;
+    transition: all 0.25s ease;
+    font-size: 1rem;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.upload-hint {
+    margin-top: 12px;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+}
+
+.file-input-label:hover {
+    background: var(--neutral-50);
+    border-color: var(--primary);
+    color: var(--primary-dark);
+}
+
+.file-input-label.dragover {
+    background: var(--primary-bg);
+    border-color: var(--primary);
+    color: var(--primary);
+    box-shadow: 0 0 0 4px var(--primary-bg) inset;
+}
+
+/* 업로드 섹션 전체 드래그오버 강조 및 오버레이 안내 */
+.upload-section.dragover {
+    border: 1.5px dashed var(--primary);
+    border-radius: var(--radius-lg);
+    background: var(--primary-bg);
+}
+.upload-section.dragover::after {
+    content: '여기에 파일을 드롭하세요';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    color: var(--primary);
+    font-weight: 600;
+    font-size: 1rem;
+    padding: 12px 18px;
+    background: var(--bg-card);
+    border: 1px solid var(--primary-light);
+    border-radius: var(--radius-sm);
+    pointer-events: none;
+    box-shadow: var(--shadow-lg);
+}
+
+.analyze-btn {
+    background: var(--primary);
+    color: var(--text-inverse);
+    border: 1px solid transparent;
+    padding: 12px 22px;
+    border-radius: 999px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.25s ease;
+    box-shadow: none;
+}
+
+.analyze-btn:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+    background: var(--primary-dark);
+}
+
+.analyze-btn:active:not(:disabled) {
+    transform: translateY(0);
+}
+
+.analyze-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    background: var(--neutral-400);
+    box-shadow: none;
+}
+
+.action-buttons {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.secondary-btn {
+    background: var(--bg-card);
+    color: var(--text-primary);
+    border-color: var(--neutral-300);
+}
+
+.secondary-btn:hover:not(:disabled) {
+    background: var(--neutral-100);
+    color: var(--text-primary);
+    box-shadow: var(--shadow-sm);
+}
+
+.export-btn {
+    background: var(--bg-card);
+    color: var(--primary);
+    border: 2px solid var(--primary);
+    padding: 13px 32px;
+    border-radius: var(--radius-lg);
+    font-size: 1rem;
+    cursor: pointer;
+    transition: all 0.25s ease;
+}
+
+.export-btn:hover:not(:disabled) {
+    background: var(--primary);
+    color: var(--text-inverse);
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-lg);
+}
+
+.export-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.upload-guide {
+    background: var(--bg-card);
+    border: 1px solid var(--neutral-200);
+    padding: 22px 24px;
+    margin: 0 auto 18px;
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+    max-width: 920px;
+    text-align: left;
+}
+
+.upload-guide p {
+    margin: 0;
+    color: var(--text-secondary);
+    line-height: 1.6;
+}
+
+.guide-title {
+    color: var(--text-primary);
+    margin-bottom: 8px !important;
+    font-size: 1rem;
+    font-weight: 700;
+}
+
+.upload-guide strong {
+    color: var(--text-primary);
+}
+
+.section-divider {
+    height: 1px;
+    background: linear-gradient(90deg, rgba(0,0,0,0.06), rgba(0,0,0,0.12), rgba(0,0,0,0.06));
+    margin: 16px 0 22px 0;
+    border: none;
+}
+
+.warning-text {
+    color: var(--warning);
+    font-weight: 600;
+    font-size: 0.95rem;
+    margin-top: 10px;
+    text-align: left;
+    padding: 8px 12px;
+    background-color: var(--warning-bg);
+    border-radius: var(--radius-md);
+    border-left: 4px solid var(--warning);
+}
+
+/* 강조 색상: XLS vs XLS data 구분 표시 */
+.warning-text .xls {
+    color: var(--warning);
+    background: rgba(217, 119, 6, 0.12);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 800;
+}
+.warning-text .xlsdata {
+    color: var(--success);
+    background: var(--success-bg);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 800;
+}
+
+.privacy-notice {
+    margin-top: 10px;
+    padding: 14px 16px;
+    border-radius: var(--radius-md);
+    background: var(--neutral-100);
+    border: 1px solid var(--neutral-200);
+    color: var(--text-secondary);
+}
+.privacy-notice p {
+    margin: 0 0 8px 0;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+.privacy-notice ul {
+    margin: 0;
+    padding-left: 18px;
+    list-style: disc;
+    color: var(--text-secondary);
+}
+.privacy-notice li {
+    margin: 3px 0;
+    line-height: 1.5;
+}
+.privacy-notice .privacy-footnote {
+    color: var(--text-muted);
+    opacity: 1;
+    margin-top: 8px;
 }
 
 .results-section {
-    padding: 40px;
+    padding: 28px 36px 36px;
+}
+
+/* 하단 크레딧 푸터 */
+.app-footer {
+    padding: 16px 36px 24px 36px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    border-top: 1px solid var(--neutral-200);
+    background: none;
+}
+.app-footer .footer-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+.app-footer .credits {
+    text-align: right;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    background: none;
+    padding: 0;
+    border-radius: 0;
+}
+.app-footer .credits a:not(.help-btn) {
+    color: var(--text-muted);
+    text-decoration: none;
+    border-bottom: 1px dashed var(--neutral-400);
+}
+.app-footer .credits a:not(.help-btn):hover {
+    color: var(--text-primary);
+    border-bottom-color: var(--neutral-500);
+}
+
+/* last updated 표시 */
+.app-footer .updated {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-left: 8px;
+}
+
+/* 도움말 버튼 */
+.help-btn {
+    display: inline-block;
+    padding: 6px 12px;
+    font-size: 0.85rem;
+    line-height: 1;
+    border-radius: 999px;
+    color: var(--primary);
+    background: var(--bg-card);
+    border: 1px solid var(--primary);
+    text-decoration: none;
+    transition: all 0.2s ease;
+}
+.help-btn:hover {
+    color: var(--text-inverse);
+    background: var(--primary);
+    border-color: var(--primary);
+    box-shadow: var(--shadow-sm);
 }
 
 .tabs {
     display: flex;
-    border-bottom: 2px solid #eee;
+    gap: 0;
+    padding: 0;
+    background: none;
+    border: none;
+    border-bottom: 2px solid var(--neutral-200);
+    border-radius: 0;
     margin-bottom: 30px;
 }
 
 .tab-btn {
     flex: 1;
-    padding: 15px 20px;
+    min-width: 0;
+    padding: 14px 18px;
     background: none;
     border: none;
-    cursor: pointer;
-    font-size: 1rem;
-    color: #666;
-    transition: all 0.3s ease;
     border-bottom: 3px solid transparent;
+    cursor: pointer;
+    font-size: 0.95rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    transition: all 0.25s ease;
+    border-radius: 0;
+    position: relative;
+    margin-bottom: -2px;
 }
 
 .tab-btn.active {
-    color: #4facfe;
-    border-bottom-color: #4facfe;
-    background: rgba(79, 172, 254, 0.05);
+    color: var(--primary);
+    background: none;
+    box-shadow: none;
+    border-bottom-color: var(--primary);
+    font-weight: 700;
+}
+
+.tab-btn:hover:not(.active) {
+    background: none;
+    color: var(--text-primary);
+    border-bottom-color: var(--neutral-300);
 }
 
 .tab-content {
@@ -1300,11 +2836,12 @@ header h1 {
 }
 
 .tab-content h2 {
-    color: #333;
-    margin-bottom: 25px;
-    font-size: 1.8rem;
-    font-weight: 400;
+    color: var(--text-primary);
+    margin-bottom: 22px;
+    font-size: 1.45rem;
+    font-weight: 600;
 }
+
 
 .subject-averages {
     display: grid;
@@ -1313,48 +2850,591 @@ header h1 {
 }
 
 .subject-item {
-    background: white;
+    background: linear-gradient(180deg, var(--bg-card) 0%, var(--neutral-50) 100%);
+    border-radius: var(--radius-lg);
+    padding: 22px;
+    border: 1px solid var(--neutral-200);
+    transition: all 0.25s ease;
+    box-shadow: none;
+}
+
+.subject-item:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+}
+
+.subject-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+}
+
+.subject-header h3 {
+    color: var(--text-primary);
+    font-size: 1.15rem;
+    font-weight: 600;
+}
+
+.credits {
+    background: var(--neutral-100);
+    color: var(--text-secondary);
+    padding: 5px 10px;
+    border-radius: 15px;
+    border: 1px solid var(--neutral-200);
+    font-size: 0.8rem;
+    font-weight: 500;
+}
+
+.average-score {
+    text-align: center;
+}
+
+.average-score .score {
+    display: block;
+    font-size: 2.2rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 5px;
+}
+
+.average-score .label {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.achievement-bars {
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 1px solid var(--neutral-200);
+}
+
+.achievement-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.achievement-label {
+    width: 25px;
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    text-align: center;
+}
+
+.achievement-bar-container {
+    flex: 1;
+    height: 20px;
+    background: var(--neutral-200);
     border-radius: 10px;
+    overflow: hidden;
+    position: relative;
+}
+
+.achievement-bar-fill {
+    height: 100%;
+    border-radius: 10px;
+    transition: width 0.8s ease;
+    min-width: 2px;
+}
+
+.achievement-bar:nth-child(1) .achievement-bar-fill { background: linear-gradient(135deg, var(--success), var(--success-light)); }
+.achievement-bar:nth-child(2) .achievement-bar-fill { background: linear-gradient(135deg, var(--info), var(--info-light)); }
+.achievement-bar:nth-child(3) .achievement-bar-fill { background: linear-gradient(135deg, var(--accent), var(--accent-light)); }
+.achievement-bar:nth-child(4) .achievement-bar-fill { background: linear-gradient(135deg, var(--warning), var(--primary-light)); }
+.achievement-bar:nth-child(5) .achievement-bar-fill { background: linear-gradient(135deg, var(--primary), var(--primary-dark)); }
+
+.achievement-percentage {
+    width: 50px;
+    text-align: right;
+    font-weight: 500;
+    color: var(--text-primary);
+    font-size: 0.85rem;
+}
+
+.achievement-distribution {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+    gap: 30px;
+}
+
+.distribution-item {
+    background: var(--bg-card);
+    border-radius: var(--radius-md);
     padding: 25px;
-    border-left: 5px solid #4facfe;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+    box-shadow: var(--shadow-sm);
+    transition: all 0.25s ease;
+}
+
+.distribution-item:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+}
+
+.distribution-item h3 {
+    color: var(--text-primary);
+    margin-bottom: 20px;
+    font-size: 1.3rem;
+    font-weight: 500;
+}
+
+.distribution-bars {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.grade-bar {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+.grade-label {
+    width: 30px;
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 1.1rem;
+}
+
+.bar-container {
+    flex: 1;
+    height: 25px;
+    background: var(--neutral-200);
+    border-radius: 15px;
+    overflow: hidden;
+    position: relative;
+}
+
+.bar {
+    height: 100%;
+    background: linear-gradient(135deg, var(--info) 0%, var(--info-light) 100%);
+    border-radius: 15px;
+    transition: width 0.8s ease;
+    min-width: 2px;
+}
+
+.percentage {
+    width: 60px;
+    text-align: right;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.student-analysis {
+    width: 100%;
+}
+
+.search-box {
+    margin-bottom: 25px;
+}
+
+.search-box input {
+    width: 100%;
+    max-width: 400px;
+    padding: 14px 18px;
+    border: 1px solid var(--neutral-300);
+    border-radius: 14px;
+    font-size: 1rem;
+    outline: none;
+    transition: all 0.25s ease;
+    background: var(--bg-card);
+}
+
+.search-box input:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px var(--primary-bg);
 }
 
 .students-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
-    gap: 20px;
+    gap: 18px;
+    margin-top: 20px;
 }
 
 .student-card {
-    background: white;
-    border-radius: 15px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-    border: 1px solid rgba(0, 0, 0, 0.05);
+    background: var(--bg-card);
+    border-radius: var(--radius-lg);
+    box-shadow: none;
+    border: 1px solid var(--neutral-200);
+    transition: all 0.25s ease;
     overflow: hidden;
+}
+
+.student-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+}
+
+.student-card-header {
+    background: linear-gradient(135deg, #5F4A8B 0%, #483670 100%);
+    color: var(--text-inverse);
+    padding: 16px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    border-bottom: none;
+}
+
+.student-basic-info {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.student-basic-info h4 {
+    margin: 0;
+    font-size: 1.2rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.student-number {
+    font-size: 0.88rem;
+    color: var(--text-secondary);
+    opacity: 1;
+}
+
+.student-summary {
+    display: flex;
+    flex-direction: row;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.summary-row {
+    display: contents;
+}
+
+.summary-metric-inline {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: var(--neutral-100);
+    border: 1px solid var(--neutral-200);
+    padding: 4px 8px;
+    border-radius: 6px;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.summary-metric-inline .metric-label {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+}
+
+.summary-metric-inline .metric-value {
+    font-size: 0.9rem;
+    font-weight: 700;
+    white-space: nowrap;
+    color: var(--text-primary);
+}
+
+.summary-metric {
+    text-align: center;
+    background: rgba(255, 255, 255, 0.15);
+    padding: 8px 12px;
+    border-radius: 8px;
+    min-width: 70px;
+}
+
+.summary-metric .metric-label {
+    display: block;
+    font-size: 0.7rem;
+    opacity: 0.8;
+    margin-bottom: 2px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.summary-metric .metric-value {
+    display: block;
+    font-size: 1.1rem;
+    font-weight: 700;
+}
+
+.student-subjects {
+    padding: 15px 20px;
+    max-height: none;
+    overflow: visible;
+}
+
+.subject-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--neutral-200);
+}
+
+.subject-row:last-child {
+    border-bottom: none;
+}
+
+.subject-row.no-grade {
+    opacity: 0.7;
+}
+
+.subject-name {
+    font-weight: 500;
+    color: var(--text-primary);
+    flex: 1;
+    font-size: 0.9rem;
+}
+
+.subject-data {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.subject-score {
+    font-weight: 600;
+    color: var(--primary);
+    font-size: 0.85rem;
+    min-width: 45px;
+    text-align: right;
+}
+
+.subject-achievement {
+    font-size: 0.8rem;
+    padding: 2px 6px;
+    border-radius: 3px;
+    min-width: 20px;
+    text-align: center;
+}
+
+.subject-grade {
+    font-weight: 500;
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    min-width: 35px;
+    text-align: center;
+}
+
+.subject-percentile {
+    font-weight: 500;
+    color: var(--success);
+    font-size: 0.8rem;
+    min-width: 40px;
+    text-align: right;
+}
+
+/* ── 학생 카드: 새 뱃지 레이아웃 ── */
+.student-card-title-row {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.student-card-name {
+    margin: 0;
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: #FFFFFF;
+    white-space: nowrap;
+}
+
+.student-card-class {
+    font-size: 0.8rem;
+    color: rgba(255, 255, 255, 0.75);
+    white-space: nowrap;
+}
+
+.student-card-badges {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.card-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    background: rgba(255, 255, 255, 0.15);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 8px;
+    white-space: nowrap;
+    flex-shrink: 0;
+    transition: border-color 0.2s ease;
+}
+
+.card-badge:hover {
+    border-color: var(--neutral-300);
+}
+
+.card-badge-label {
+    font-size: 0.68rem;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.7);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.card-badge-value {
+    font-size: 0.88rem;
+    font-weight: 700;
+    color: #FFFFFF;
+}
+
+.card-badge-value.primary {
+    color: #FFFFFF;
+}
+
+.card-badge-value.accent {
+    color: #E8E0F4;
+}
+
+.card-badge-value small {
+    font-size: 0.7rem;
+    font-weight: 500;
+    color: var(--text-muted);
+}
+
+.student-card-footer {
+    background: var(--bg-card);
+    padding: 15px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-top: 1px solid var(--neutral-200);
+}
+
+.grade-subjects-count {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.view-detail-btn {
+    background: var(--bg-card);
+    color: var(--text-primary);
+    border: 1px solid var(--neutral-300);
+    padding: 8px 16px;
+    border-radius: var(--radius-sm);
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: all 0.25s ease;
+    font-weight: 500;
+}
+
+.view-detail-btn:hover {
+    transform: translateY(-1px);
+    border-color: var(--primary);
+    color: var(--primary-dark);
+    box-shadow: var(--shadow-sm);
+}
+
+.achievement.A {
+    background: var(--success);
+    color: var(--text-inverse);
+    font-weight: bold;
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+
+.achievement.B {
+    background: var(--info);
+    color: var(--text-inverse);
+    font-weight: bold;
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+
+.achievement.C {
+    background: var(--accent);
+    color: var(--text-inverse);
+    font-weight: bold;
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+
+.achievement.D {
+    background: var(--warning);
+    color: var(--text-inverse);
+    font-weight: bold;
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+
+.achievement.E, .achievement.미도달 {
+    background: var(--primary);
+    color: var(--text-inverse);
+    font-weight: bold;
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+
+.score {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.grade {
+    text-align: center;
+    font-weight: 500;
+}
+
+.rank {
+    text-align: center;
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+
+.avg-grade {
+    text-align: center;
+    font-weight: 600;
+    color: var(--primary);
+    font-size: 1.1rem;
 }
 
 .grade-analysis-container {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 30px;
+    grid-template-rows: auto auto;
+    gap: 20px;
+    margin-bottom: 30px;
 }
 
 .chart-section {
-    background: #f8f9fa;
-    border-radius: 10px;
-    padding: 25px;
+    background: linear-gradient(180deg, var(--bg-card) 0%, var(--neutral-50) 100%);
+    border-radius: var(--radius-lg);
+    padding: 22px;
     text-align: center;
+    border: 1px solid var(--neutral-200);
+}
+
+.chart-section h3 {
+    color: var(--text-primary);
+    margin-bottom: 20px;
+    font-size: 1.3rem;
+    font-weight: 500;
+}
+
+.chart-section canvas {
+    max-width: 100%;
+    height: 350px !important;
 }
 
 .stats-section {
     grid-column: 1 / -1;
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 20px;
-    background: #f8f9fa;
-    border-radius: 10px;
-    padding: 25px;
+    gap: 16px;
+    background: linear-gradient(180deg, var(--bg-card) 0%, var(--neutral-50) 100%);
+    border-radius: var(--radius-lg);
+    padding: 22px;
+    border: 1px solid var(--neutral-200);
 }
 
 .stat-item {
@@ -1362,57 +3442,1379 @@ header h1 {
     flex-direction: column;
     align-items: center;
     text-align: center;
-    background: white;
-    border-radius: 8px;
+    background: var(--bg-card);
+    border-radius: var(--radius-md);
     padding: 20px;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    box-shadow: none;
+    border: 1px solid var(--neutral-200);
 }
 
-/* 하단 크레딧 푸터 (fallback) */
-.app-footer {
-    padding: 12px 40px 24px 40px;
+.stat-label {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 8px;
+}
+
+.stat-value {
+    color: var(--text-primary);
+    font-size: 2rem;
+    font-weight: 600;
+}
+
+@media (max-width: 768px) {
+    .grade-analysis-container {
+        grid-template-columns: 1fr;
+        gap: 20px;
+    }
+    
+    .stats-section {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 15px;
+    }
+    
+    .chart-section {
+        padding: 15px;
+    }
+    
+    .stat-item {
+        padding: 15px;
+    }
+    
+    .stat-value {
+        font-size: 1.5rem;
+    }
+}
+
+.loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 60px;
+    color: var(--text-secondary);
+}
+
+.spinner {
+    width: 50px;
+    height: 50px;
+    border: 4px solid var(--neutral-200);
+    border-top: 4px solid var(--primary);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-bottom: 20px;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.loading p {
+    font-size: 1.1rem;
+    color: var(--text-secondary);
+}
+
+.error-message {
+    background: var(--warning-bg);
+    color: var(--warning);
+    padding: 20px;
+    margin: 20px 40px;
+    border-radius: var(--radius-md);
+    border-left: 5px solid var(--warning);
+    font-size: 1rem;
+}
+
+.file-list {
+    background: var(--neutral-100);
+    border-radius: var(--radius-lg);
+    padding: 20px;
+    margin: 20px 0;
+    border: 1px solid var(--neutral-200);
+}
+
+.file-list h4 {
+    color: var(--text-primary);
+    margin-bottom: 15px;
+    font-size: 1.1rem;
+}
+
+.file-list ul {
+    list-style: none;
+    padding: 0;
+}
+
+.file-list li {
+    background: var(--bg-card);
+    padding: 10px 15px;
+    margin: 8px 0;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--neutral-200);
+    box-shadow: none;
+}
+
+.file-selector-section {
+    background: var(--bg-card);
+    padding: 20px;
+    border-radius: var(--radius-lg);
+    margin-bottom: 20px;
     display: flex;
     align-items: center;
-    justify-content: flex-end;
+    gap: 15px;
+    border: 1px solid var(--neutral-200);
 }
-.app-footer .footer-right {
+
+.file-selector-section label {
+    color: var(--text-primary);
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.file-select {
+    flex: 1;
+    padding: 10px 15px;
+    border: 2px solid var(--neutral-300);
+    border-radius: var(--radius-sm);
+    font-size: 1rem;
+    background: var(--bg-card);
+    outline: none;
+    transition: all 0.25s ease;
+}
+
+.file-select:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px var(--primary-bg);
+}
+
+.comparison-container {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 30px;
+}
+
+.comparison-section {
+    background: var(--neutral-100);
+    border-radius: var(--radius-lg);
+    padding: 25px;
+    border: 1px solid var(--border-light);
+}
+
+.comparison-section h3 {
+    color: var(--text-primary);
+    margin-bottom: 20px;
+    font-size: 1.3rem;
+    font-weight: 500;
+}
+
+.comparison-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--bg-card);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    box-shadow: var(--shadow-sm);
+}
+
+.comparison-table th,
+.comparison-table td {
+    padding: 12px 15px;
+    text-align: center;
+    border-bottom: 1px solid var(--neutral-200);
+}
+
+.comparison-table th {
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+    color: var(--text-inverse);
+    font-weight: 500;
+    font-size: 0.9rem;
+}
+
+.comparison-table tr:nth-child(even) {
+    background: var(--neutral-100);
+}
+
+.comparison-table tr:hover {
+    background: var(--primary-bg);
+}
+
+@media (max-width: 768px) {
+    .file-selector-section {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+    }
+    
+    .file-select {
+        width: 100%;
+    }
+    
+    .comparison-table {
+        font-size: 0.8rem;
+    }
+    
+    .comparison-table th,
+    .comparison-table td {
+        padding: 8px 6px;
+    }
+}
+
+/* 학생 선택 및 상세 분석 스타일 */
+.student-selector {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    background: var(--bg-card);
+    padding: 20px;
+    border-radius: var(--radius-lg);
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+    border: 1px solid var(--neutral-200);
+    box-shadow: var(--shadow-sm);
+}
+
+.selector-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.selector-group label {
+    font-weight: 500;
+    color: var(--text-primary);
+    white-space: nowrap;
+}
+
+.selector {
+    padding: 10px 12px;
+    border: 1px solid var(--neutral-300);
+    border-radius: var(--radius-sm);
+    font-size: 0.9rem;
+    background: var(--bg-card);
+    min-width: 120px;
+    transition: all 0.25s ease;
+}
+
+.selector:focus {
+    border-color: var(--primary);
+    outline: none;
+    box-shadow: 0 0 0 3px var(--primary-bg);
+}
+
+.detail-btn {
+    background: var(--bg-card);
+    color: var(--text-primary);
+    border: 1px solid var(--neutral-300);
+    padding: 10px 20px;
+    border-radius: var(--radius-sm);
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: all 0.25s ease;
+    white-space: nowrap;
+}
+
+.detail-btn:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-sm);
+    border-color: var(--primary);
+    color: var(--primary-dark);
+}
+
+.detail-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.view-toggle {
+    display: flex;
+    background: var(--neutral-100);
+    border-radius: var(--radius-md);
+    padding: 4px;
+    margin-bottom: 20px;
+    width: fit-content;
+    border: 1px solid var(--neutral-200);
+}
+
+.toggle-btn {
+    background: none;
+    border: none;
+    padding: 10px 20px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all 0.25s ease;
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+
+.toggle-btn.active {
+    background: var(--bg-card);
+    color: var(--text-primary);
+    box-shadow: var(--shadow-sm);
+}
+
+/* 학생 상세 분석 스타일 */
+.student-detail-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    background: linear-gradient(180deg, var(--bg-card) 0%, var(--neutral-100) 100%);
+    color: var(--text-primary);
+    padding: 22px 24px;
+    border-radius: var(--radius-lg);
+    margin-bottom: 20px;
+    border: 1px solid var(--border-light);
+    box-shadow: var(--shadow-md);
+}
+
+.student-info h3 {
+    font-size: 1.5rem;
+    margin-bottom: 6px;
+    font-weight: 400;
+}
+
+.student-meta {
+    display: flex;
+    gap: 14px;
+    font-size: 0.85rem;
+    opacity: 0.9;
+    flex-wrap: wrap;
+}
+
+.overall-stats {
+    display: flex;
+    gap: 12px;
+}
+
+.stat-card {
+    text-align: center;
+    background: var(--bg-card);
+    padding: 12px 16px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-light);
+    box-shadow: var(--shadow-sm);
+    min-width: 110px;
+}
+
+.stat-label {
+    display: block;
+    font-size: 0.8rem;
+    opacity: 0.8;
+    margin-bottom: 5px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.stat-value {
+    display: block;
+    font-size: 1.35rem;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.stat-value.grade {
+    color: var(--primary);
+}
+
+.student-detail-content {
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+    margin-bottom: 24px;
+}
+
+.analysis-overview {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.85fr);
+    gap: 20px;
+    margin-bottom: 20px;
+    align-items: start;
+}
+
+.student-summary {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.summary-card {
+    background: var(--bg-card);
+    border-radius: var(--radius-lg);
+    padding: 18px 20px;
+    box-shadow: var(--shadow-md);
+    border: 1px solid var(--border-light);
+}
+
+.summary-header {
+    margin-bottom: 14px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--neutral-200);
+}
+
+.summary-header h4 {
+    color: var(--text-primary);
+    font-size: 1.2rem;
+    font-weight: 600;
+    margin: 0;
+}
+
+.summary-grid {
+    display: grid;
+    gap: 10px;
+}
+
+.summary-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.summary-item:last-child {
+    border-bottom: none;
+}
+
+.summary-label {
+    font-weight: 500;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.summary-value {
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 1rem;
+    text-align: right;
+}
+
+.summary-value-group {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+}
+
+.summary-value.highlight {
+    color: var(--primary);
+    font-size: 1.05rem;
+    font-weight: 600;
+}
+
+.summary-value.orange {
+    color: var(--accent);
+    font-size: 1.05rem;
+    font-weight: 600;
+}
+
+.summary-note {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    text-align: right;
+    line-height: 1.35;
+    white-space: nowrap;
+}
+
+.metric-value.orange {
+    color: var(--accent);
+    font-weight: 600;
+}
+
+.chart-container {
+    background: var(--neutral-100);
+    border-radius: var(--radius-lg);
+    padding: 16px 18px 18px;
+    text-align: center;
+    border: 1px solid var(--border-light);
+    width: 100%;
+    max-width: 420px;
+    justify-self: end;
+}
+
+.chart-container h4 {
+    color: var(--text-primary);
+    margin-bottom: 12px;
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+.chart-container canvas {
+    display: block;
+    width: min(100%, 320px) !important;
+    height: auto !important;
+    margin: 0 auto;
+}
+
+.subject-details h4 {
+    color: var(--text-primary);
+    margin-bottom: 20px;
+    font-size: 1.2rem;
+    font-weight: 500;
+}
+
+.subject-cards {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+    max-height: none;
+}
+
+@media (max-width: 1200px) {
+    .subject-cards {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* 교과(군)별 섹션 스타일 */
+.subject-group-section {
+    background: var(--neutral-100);
+    border-radius: var(--radius-lg);
+    padding: 20px;
+    border: 1px solid var(--border-light);
+}
+
+.subject-group-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    background: var(--bg-card);
+    border-radius: var(--radius-md);
+    margin-bottom: 16px;
+    box-shadow: var(--shadow-sm);
+}
+
+.subject-group-header h5 {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.subject-group-header .subject-count {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    background: var(--neutral-200);
+    padding: 4px 10px;
+    border-radius: 10px;
+    font-weight: 500;
+}
+
+.subject-group-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+    gap: 15px;
+}
+
+/* 컴팩트 테이블 스타일 */
+.subject-group-section.compact {
+    padding: 14px;
+    margin-bottom: 0;
+    height: fit-content;
+}
+
+.subject-group-section.compact .subject-group-header {
+    margin-bottom: 12px;
+    padding: 8px 12px;
+}
+
+.subject-group-section.compact .subject-group-header h5 {
+    font-size: 0.95rem;
+}
+
+.subject-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--bg-card);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    font-size: 0.8rem;
+}
+
+.subject-table thead {
+    background: linear-gradient(135deg, var(--neutral-200) 0%, var(--neutral-100) 100%);
+}
+
+.subject-table th {
+    padding: 8px 6px;
+    text-align: center;
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    border-bottom: 2px solid var(--neutral-300);
+}
+
+.subject-table th:first-child {
+    text-align: left;
+    padding-left: 10px;
+}
+
+.subject-table td {
+    padding: 8px 6px;
+    border-bottom: 1px solid var(--neutral-200);
+    color: var(--text-primary);
+}
+
+.subject-table td.center {
+    text-align: center;
+}
+
+.subject-table td.subject-name-cell {
+    font-weight: 500;
+    padding-left: 10px;
+    max-width: 100px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.subject-table tbody tr:hover {
+    background: var(--neutral-100);
+}
+
+.subject-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.subject-table tr.no-grade-row {
+    opacity: 0.7;
+    background: var(--neutral-50);
+}
+
+.subject-table .score-value {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.subject-table .avg-value {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-left: 2px;
+}
+
+.subject-table .achievement-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 600;
+    font-size: 0.8rem;
+}
+
+.subject-table .achievement-badge.A { background: var(--success); color: var(--text-inverse); }
+.subject-table .achievement-badge.B { background: var(--info); color: var(--text-inverse); }
+.subject-table .achievement-badge.C { background: var(--accent); color: var(--text-inverse); }
+.subject-table .achievement-badge.D { background: var(--warning); color: var(--text-inverse); }
+.subject-table .achievement-badge.E { background: var(--primary); color: var(--text-inverse); }
+
+.subject-table .grade9-value {
+    color: var(--accent);
+    font-weight: 600;
+}
+
+@media (max-width: 768px) {
+    .subject-table {
+        font-size: 0.75rem;
+    }
+
+    .subject-table th,
+    .subject-table td {
+        padding: 8px 4px;
+    }
+
+    .subject-table td.subject-name-cell {
+        max-width: 80px;
+    }
+
+    .subject-table .avg-value {
+        display: none;
+    }
+}
+
+.subject-card.no-grade {
+    opacity: 0.8;
+    border-left: 4px solid var(--neutral-500);
+}
+
+.subject-metrics.simple {
+    grid-template-columns: 1fr 1fr;
+    margin-bottom: 0;
+}
+
+.no-grade-notice {
+    text-align: center;
+    padding: 15px;
+    background: var(--neutral-200);
+    border-radius: var(--radius-sm);
+    margin-top: 15px;
+}
+
+.no-grade-notice span {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    font-style: italic;
+}
+
+.subject-card {
+    background: var(--bg-card);
+    border-radius: var(--radius-md);
+    padding: 18px;
+    box-shadow: var(--shadow-sm);
+    transition: all 0.2s ease;
+    border: 1px solid var(--border-light);
+}
+
+.subject-card:hover {
+    box-shadow: var(--shadow-md);
+    border-color: var(--border-medium);
+}
+
+.subject-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid var(--neutral-200);
+}
+
+.subject-header h5 {
+    color: var(--text-primary);
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin: 0;
+}
+
+.subject-header .credits {
+    background: var(--info);
+    color: var(--text-inverse);
+    padding: 4px 8px;
+    border-radius: 12px;
+    font-size: 0.8rem;
+    font-weight: 500;
+}
+
+.subject-metrics {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 15px;
+    margin-bottom: 15px;
+}
+
+.subject-metrics:last-of-type {
+    grid-template-columns: 1fr 1fr 0fr;
+}
+
+.metric {
+    text-align: center;
+}
+
+.metric-label {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    margin-bottom: 5px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.metric-value {
+    display: block;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.metric-average {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    font-weight: normal;
+    margin-top: 2px;
+}
+
+.metric-value.achievement.A {
+    background: var(--success);
+    color: var(--text-inverse);
+    font-weight: bold;
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+.metric-value.achievement.B {
+    background: var(--info);
+    color: var(--text-inverse);
+    font-weight: bold;
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+.metric-value.achievement.C {
+    background: var(--accent);
+    color: var(--text-primary);
+    font-weight: bold;
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+.metric-value.achievement.D {
+    background: var(--warning);
+    color: var(--text-inverse);
+    font-weight: bold;
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+.metric-value.achievement.E, .metric-value.achievement.미도달 {
+    background: var(--primary);
+    color: var(--text-inverse);
+    font-weight: bold;
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+
+.percentile-bar {
+    height: 8px;
+    background: var(--neutral-200);
+    border-radius: 4px;
+    overflow: hidden;
+    position: relative;
+}
+
+.percentile-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.8s ease;
+}
+
+.percentile-fill.excellent { background: linear-gradient(90deg, var(--success), var(--success-light)); }
+.percentile-fill.good { background: linear-gradient(90deg, var(--info), var(--info-light)); }
+.percentile-fill.average { background: linear-gradient(90deg, var(--warning), var(--warning-light)); }
+.percentile-fill.low { background: linear-gradient(90deg, var(--neutral-500), var(--neutral-400)); }
+
+.percentile.excellent { color: var(--success); font-weight: 600; }
+.percentile.good { color: var(--info); font-weight: 600; }
+.percentile.average { color: var(--warning); font-weight: 600; }
+.percentile.low { color: var(--neutral-500); font-weight: 500; }
+
+@media (max-width: 1024px) {
+    .analysis-overview {
+        grid-template-columns: 1fr;
+        gap: 20px;
+    }
+    
+    .chart-container {
+        padding: 20px;
+    }
+    
+    .student-detail-header {
+        flex-direction: column;
+        gap: 20px;
+    }
+    
+    .overall-stats {
+        align-self: stretch;
+        justify-content: space-around;
+    }
+    
+    .subject-cards {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* 출력용 스타일 */
+@page {
+    size: A4 portrait;
+    margin: 10mm;
+}
+@media print {
+    .print-area {
+        transform-origin: top left !important;
+    }
+    .print-area.apply-print-scale {
+        transform: scale(var(--page-scale, 1)) !important;
+    }
+    * {
+        -webkit-print-color-adjust: exact !important;
+        color-adjust: exact !important;
+        print-color-adjust: exact !important;
+    }
+    
+    body {
+        background: white !important;
+        margin: 0;
+        padding: 0;
+        font-size: 12px;
+        line-height: 1.4;
+        color: #000 !important;
+    }
+    
+    .container {
+        max-width: none;
+        margin: 0;
+        box-shadow: none;
+        border-radius: 0;
+        background: white;
+    }
+    
+    header {
+        display: none !important;
+    }
+    
+    .upload-section,
+    .tabs,
+    .view-toggle,
+    .student-selector,
+    .search-box,
+    .print-controls {
+        display: none !important;
+    }
+    
+    .results-section {
+        padding: 15px;
+    }
+    
+    .tab-content {
+        display: block !important;
+    }
+    
+    .tab-content:not(.print-target) {
+        display: none !important;
+    }
+
+    /* 학생 탭 인쇄 시 개인 상세 페이지만 표시 */
+    #students-tab.only-class-print > *:not(.class-print-area) {
+        display: none !important;
+    }
+
+    /* A4에 맞춘 폭 고정 및 중앙 정렬 */
+    .class-print-area {
+        width: 190mm;
+        margin: 0 auto;
+    }
+    .class-print-area .student-print-page {
+        width: 190mm;
+        transform-origin: top left !important;
+    }
+    .class-print-area .student-print-page.apply-print-scale {
+        transform: scale(var(--page-scale, 1)) !important;
+    }
+
+    /* 학급 전체 인쇄 모드: 더 컴팩트한 카드와 차트 크기 */
+    #students-tab.only-class-print .student-detail-header {
+        padding: 12px;
+        margin-bottom: 10px;
+    }
+    #students-tab.only-class-print .student-info h3 {
+        font-size: 14px;
+    }
+    #students-tab.only-class-print .student-meta {
+        font-size: 11px;
+    }
+    #students-tab.only-class-print .summary-card,
+    #students-tab.only-class-print .stat-card {
+        margin-bottom: 8px;
+        padding: 10px;
+    }
+    
+    /* 별도 프린트 헤더는 사용하지 않음 */
+    .print-header {
+        display: none !important;
+    }
+    
+    .print-header h2 {
+        margin: 0;
+        color: #2c3e50;
+        font-size: 18px;
+        font-weight: bold;
+    }
+    
+    .print-date {
+        margin-top: 10px;
+        font-size: 12px;
+        color: #666;
+    }
+    
+    .student-detail-header {
+        background: #f8f9fa !important;
+        border: 2px solid #4facfe;
+        margin-bottom: 15px;
+        padding: 20px;
+        page-break-after: avoid;
+    }
+    
+    .student-info h3 {
+        color: #2c3e50 !important;
+        font-size: 16px;
+        margin-bottom: 8px;
+    }
+    
+    .student-meta {
+        color: #666 !important;
+        font-size: 12px;
+    }
+    
+    .stat-card {
+        border: 1px solid #ddd !important;
+        background: white !important;
+    }
+    
+    .stat-label {
+        color: #666 !important;
+        font-size: 10px;
+    }
+    
+    .stat-value {
+        color: #2c3e50 !important;
+        font-size: 14px;
+    }
+    
+    .analysis-overview {
+        grid-template-columns: 1fr;
+        gap: 15px;
+        page-break-inside: avoid;
+    }
+    
+    /* 레이더 차트도 출력/PDF에 포함 */
+    .chart-container {
+        display: block !important;
+    }
+    
+    .summary-card {
+        border: 1px solid #ddd !important;
+        background: #f9f9f9 !important;
+        margin-bottom: 15px;
+    }
+    
+    .summary-header h4 {
+        color: #2c3e50 !important;
+        font-size: 14px;
+    }
+    
+    .summary-label {
+        color: #666 !important;
+        font-size: 11px;
+    }
+    
+    .summary-value {
+        color: #2c3e50 !important;
+        font-size: 12px;
+    }
+    
+    .summary-value.highlight {
+        color: #4facfe !important;
+        font-weight: bold;
+    }
+    
+    .subject-details h4 {
+        color: #2c3e50 !important;
+        font-size: 14px;
+        margin-bottom: 15px;
+    }
+    
+    .subject-cards {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+        page-break-inside: avoid;
+    }
+    
+    .subject-card {
+        border: 1px solid #ddd !important;
+        background: white !important;
+        page-break-inside: avoid;
+        margin-bottom: 8px;
+        padding: 12px;
+    }
+    
+    .subject-header h5 {
+        color: #2c3e50 !important;
+        font-size: 12px;
+        margin: 0 0 8px 0;
+    }
+    
+    .subject-header .credits {
+        background: #4facfe !important;
+        color: white !important;
+        font-size: 9px;
+        padding: 2px 6px;
+    }
+    
+    .subject-metrics {
+        gap: 8px;
+        margin-bottom: 8px;
+    }
+    
+    .metric-label {
+        font-size: 9px;
+        color: #666 !important;
+    }
+    
+    .metric-value {
+        font-size: 11px;
+        color: #2c3e50 !important;
+    }
+    
+    .metric-average {
+        font-size: 9px;
+        color: #666 !important;
+    }
+    
+    .percentile-bar {
+        height: 6px;
+        background: #e9ecef !important;
+    }
+    
+    .no-grade-notice {
+        background: rgba(108, 117, 125, 0.1) !important;
+        font-size: 10px;
+    }
+    
+    .no-grade-notice span {
+        color: #666 !important;
+    }
+    
+    /* 성취도 색상 */
+    .achievement.A, .metric-value.achievement.A { 
+        background: #28a745 !important; 
+        color: white !important; 
+    }
+    .achievement.B, .metric-value.achievement.B { 
+        background: #17a2b8 !important; 
+        color: white !important; 
+    }
+    .achievement.C, .metric-value.achievement.C { 
+        background: #ffc107 !important; 
+        color: #212529 !important; 
+    }
+    .achievement.D, .metric-value.achievement.D { 
+        background: #fd7e14 !important; 
+        color: white !important; 
+    }
+    .achievement.E, .achievement.미도달, 
+    .metric-value.achievement.E, .metric-value.achievement.미도달 { 
+        background: #dc3545 !important; 
+        color: white !important; 
+    }
+    
+    /* 페이지 나누기 규칙 */
+    .subject-card {
+        break-inside: avoid;
+    }
+    
+    .summary-card {
+        break-inside: avoid;
+    }
+
+    /* 학급 전체 인쇄: 학생별 한 페이지씩 */
+    .class-print-area .student-print-page {
+        page-break-after: always;
+        break-after: page;
+    }
+    .class-print-area .student-print-page:last-child {
+        page-break-after: auto;
+        break-after: auto;
+    }
+}
+
+/* PDF 출력 버튼 스타일 */
+.print-controls {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.student-nav-controls {
     display: flex;
     align-items: center;
     gap: 10px;
-}
-.app-footer .credits {
-    text-align: right;
-    font-size: 0.85rem;
-    color: #ffffff; /* 흰색으로 변경 */
-    opacity: 0.95;
-}
-.app-footer .credits a:not(.help-btn) {
-    color: #adb5bd;
-    text-decoration: none;
-    border-bottom: 1px dashed rgba(173,181,189,0.5);
-}
-.app-footer .credits a:not(.help-btn):hover {
-    color: #6c757d;
-    border-bottom-color: rgba(108,117,125,0.7);
+    flex-wrap: wrap;
 }
 
-/* 도움말 버튼 */
-.help-btn {
-    display: inline-block;
-    padding: 6px 12px;
-    font-size: 0.85rem;
-    line-height: 1;
-    border-radius: 999px;
-    color: #4facfe;
-    background: #ffffff;
-    border: 1px solid #4facfe;
-    text-decoration: none;
-    transition: all 0.2s ease;
+.student-nav-status {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    font-weight: 600;
+    padding: 0 4px;
 }
-.help-btn:hover {
-    color: #ffffff;
-    background: #4facfe;
-    box-shadow: 0 6px 16px rgba(79, 172, 254, 0.25);
+
+.print-btn, .pdf-btn {
+    background: linear-gradient(135deg, var(--success) 0%, var(--success-light) 100%);
+    color: var(--text-inverse);
+    border: none;
+    padding: 10px 20px;
+    border-radius: var(--radius-sm);
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: all 0.25s ease;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 500;
+}
+
+.pdf-btn {
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
+}
+
+.print-btn:hover, .pdf-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+}
+
+.print-btn::before {
+    content: "🖨️";
+    font-size: 16px;
+}
+
+.pdf-btn::before {
+    content: "📄";
+    font-size: 16px;
+}
+
+@media (max-width: 768px) {
+    .student-selector {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 15px;
+    }
+
+    .selector-group {
+        justify-content: space-between;
+    }
+
+    .selector {
+        min-width: unset;
+        flex: 1;
+    }
+
+    .subject-metrics {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+    }
+
+    .container {
+        margin: 10px;
+        border-radius: var(--radius-lg);
+    }
+
+    header {
+        padding: 20px;
+    }
+
+    header h1 {
+        font-size: 1.6rem;
+    }
+
+    .header-subtitle {
+        font-size: 0.92rem;
+    }
+
+    .upload-section,
+    .results-section {
+        padding: 20px;
+    }
+
+    .file-input-label {
+        min-height: 74px;
+        padding: 16px 18px;
+    }
+
+    .action-buttons {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .subject-averages {
+        grid-template-columns: 1fr;
+    }
+
+    .tabs {
+        display: flex;
+        width: 100%;
+    }
+
+    .tab-btn {
+        min-width: 0;
+        padding: 12px 10px;
+        font-size: 0.85rem;
+    }
+
+    .students-grid {
+        grid-template-columns: 1fr;
+        gap: 15px;
+    }
+
+    .student-card-header {
+        padding: 14px 16px;
+        gap: 8px;
+    }
+
+    .student-card-badges {
+        gap: 6px;
+    }
+
+    .card-badge {
+        padding: 4px 8px;
+        gap: 4px;
+    }
+
+    .card-badge-label {
+        font-size: 0.6rem;
+    }
+
+    .card-badge-value {
+        font-size: 0.8rem;
+    }
+
+    .student-summary {
+        gap: 5px;
+    }
+
+    .summary-metric-inline {
+        padding: 3px 6px;
+    }
+
+    .summary-metric-inline .metric-label {
+        font-size: 0.6rem;
+    }
+
+    .summary-metric-inline .metric-value {
+        font-size: 0.78rem;
+    }
+
+    .subject-data {
+        gap: 6px;
+    }
+
+    .subject-name {
+        font-size: 0.85rem;
+    }
+
+    .subject-score, .subject-achievement, .subject-grade, .subject-percentile {
+        font-size: 0.75rem;
+    }
+
+    .print-controls {
+        justify-content: center;
+    }
+
+    .print-btn, .pdf-btn {
+        flex: 1;
+        min-width: 120px;
+        justify-content: center;
+    }
+
+    .analyze-btn,
+    .secondary-btn {
+        width: 100%;
+        justify-content: center;
+    }
+
+    .print-controls,
+    .student-nav-controls {
+        justify-content: center;
+    }
 }
 `;
     }
@@ -1427,6 +4829,8 @@ class ScoreAnalyzer {
         
         if (this.combinedData) {
             console.log('사전 로드된 데이터 발견:', this.combinedData);
+            const introHeader = document.querySelector('.container > header');
+            if (introHeader) introHeader.style.display = 'none';
             const upload = document.querySelector('.upload-section');
             if (upload) upload.style.display = 'none';
             const results = document.getElementById('results');
@@ -1463,6 +4867,9 @@ class ScoreAnalyzer {
         this.displaySubjectAverages();
         this.displayGradeAnalysis();
         this.displayStudentAnalysis();
+        if (document.querySelector('[data-tab="subjects"]') && document.getElementById('subjects-tab')) {
+            this.switchTab('subjects');
+        }
     }
     
     displaySubjectAverages() {
@@ -2263,6 +5670,66 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    getStudentDetailNavigationStudents() {
+        if (!this.combinedData) return [];
+
+        const gradeSelect = document.getElementById('gradeSelect');
+        const classSelect = document.getElementById('classSelect');
+        const studentNameSearch = document.getElementById('studentNameSearch');
+        const studentSearch = document.getElementById('studentSearch');
+
+        const selectedGrade = gradeSelect ? gradeSelect.value : '';
+        const selectedClass = classSelect ? classSelect.value : '';
+        const detailQuery = studentNameSearch && studentNameSearch.value
+            ? studentNameSearch.value.trim().toLowerCase()
+            : '';
+        const tableQuery = studentSearch && studentSearch.value
+            ? studentSearch.value.trim().toLowerCase()
+            : '';
+
+        let students = this.combinedData.students;
+        if (selectedGrade) {
+            students = students.filter(s => String(s.grade) === String(selectedGrade));
+        }
+        if (selectedClass) {
+            students = students.filter(s => String(s.class) === String(selectedClass));
+        }
+        if (detailQuery) {
+            students = students.filter(s =>
+                (s.name && s.name.toLowerCase().includes(detailQuery)) ||
+                (s.originalNumber && String(s.originalNumber).includes(detailQuery))
+            );
+        }
+        if (tableQuery) {
+            students = students.filter(s =>
+                (s.name && s.name.toLowerCase().includes(tableQuery)) ||
+                String(s.number).includes(tableQuery) ||
+                (s.originalNumber && String(s.originalNumber).includes(tableQuery))
+            );
+        }
+
+        return students;
+    }
+
+    navigateStudentDetail(offset) {
+        const studentSelect = document.getElementById('studentSelect');
+        const currentStudentId = studentSelect ? studentSelect.value : '';
+        const navigationStudents = this.getStudentDetailNavigationStudents();
+        if (!currentStudentId || navigationStudents.length === 0) return;
+
+        const currentIndex = navigationStudents.findIndex(student => String(student.number) === String(currentStudentId));
+        if (currentIndex === -1) return;
+
+        const nextIndex = currentIndex + offset;
+        if (nextIndex < 0 || nextIndex >= navigationStudents.length) return;
+
+        const targetStudent = navigationStudents[nextIndex];
+        if (studentSelect) {
+            studentSelect.value = targetStudent.number;
+        }
+        this.renderStudentDetail(targetStudent);
+    }
+
     renderStudentTable(students, subjects, container) {
         container.innerHTML = '';
 
@@ -2281,6 +5748,8 @@ document.addEventListener('DOMContentLoaded', () => {
             
             // 과목별 평균 백분위 계산
             const weightedAveragePercentile = this.calculateWeightedAveragePercentile(student, subjects);
+            const hasRankBasedPercentile = student.ranks 
+                && Object.values(student.ranks).some(r => r !== undefined && r !== null && !isNaN(r));
             
             // 평균등급 기준 순위
             const averageGradeRank = student.averageGradeRank;
@@ -2317,29 +5786,25 @@ document.addEventListener('DOMContentLoaded', () => {
             
             studentCard.innerHTML = `
                 <div class="student-card-header">
-                    <div class="student-basic-info">
-                        <h4>${student.name}</h4>
-                        <span class="student-number">${student.grade}학년 ${student.class}반 ${student.originalNumber}번</span>
+                    <div class="student-card-title-row">
+                        <h4 class="student-card-name">${student.name}</h4>
+                        <span class="student-card-class">${student.grade}학년 ${student.class}반 ${student.originalNumber}번</span>
                     </div>
-                    <div class="student-summary">
-                        <div class="summary-row">
-                            <div class="summary-metric-inline">
-                                <span class="metric-label">평균등급</span>
-                                <span class="metric-value">${student.weightedAverageGrade ? student.weightedAverageGrade.toFixed(2) : 'N/A'}</span>
-                            </div>
-                            ${averageGradeRank !== null && averageGradeRank !== undefined ? `
-                            <div class="summary-metric-inline">
-                                <span class="metric-label">등급순위</span>
-                                <span class="metric-value">${averageGradeRank}/${totalGradedStudents}위${sameGradeCount > 1 ? ` (${sameGradeCount}명)` : ''}</span>
-                            </div>
-                            ` : ''}
+                    <div class="student-card-badges">
+                        <div class="card-badge">
+                            <span class="card-badge-label">평균등급</span>
+                            <span class="card-badge-value primary">${student.weightedAverageGrade ? student.weightedAverageGrade.toFixed(2) : 'N/A'}</span>
                         </div>
+                        ${averageGradeRank !== null && averageGradeRank !== undefined ? `
+                        <div class="card-badge">
+                            <span class="card-badge-label">등급순위</span>
+                            <span class="card-badge-value">${averageGradeRank}/${totalGradedStudents}위${sameGradeCount > 1 ? ` (${sameGradeCount}명)` : ''}</span>
+                        </div>
+                        ` : ''}
                         ${weightedAveragePercentile ? `
-                        <div class="summary-row">
-                            <div class="summary-metric-inline">
-                                <span class="metric-label">과목평균백분위</span>
-                                <span class="metric-value">${weightedAveragePercentile.toFixed(1)}%</span>
-                            </div>
+                        <div class="card-badge">
+                            <span class="card-badge-label">백분위</span>
+                            <span class="card-badge-value accent">${weightedAveragePercentile.toFixed(1)}%${!hasRankBasedPercentile ? ' <small>(추정)</small>' : ''}</span>
                         </div>
                         ` : ''}
                     </div>
@@ -2415,6 +5880,46 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    searchAndShowStudentDetail(searchTerm) {
+        if (!this.combinedData || !searchTerm) return;
+
+        const gradeSelect = document.getElementById('gradeSelect');
+        const classSelect = document.getElementById('classSelect');
+        const selectedGrade = gradeSelect ? gradeSelect.value : '';
+        const selectedClass = classSelect ? classSelect.value : '';
+        const query = searchTerm.toLowerCase();
+
+        // 학년/반 필터 적용 후 이름/번호로 검색
+        let filtered = this.combinedData.students;
+
+        if (selectedGrade) {
+            filtered = filtered.filter(s => String(s.grade) === String(selectedGrade));
+        }
+        if (selectedClass) {
+            filtered = filtered.filter(s => String(s.class) === String(selectedClass));
+        }
+
+        filtered = filtered.filter(s =>
+            (s.name && s.name.toLowerCase().includes(query)) ||
+            (s.originalNumber && String(s.originalNumber).includes(query)) ||
+            String(s.number).includes(query)
+        );
+
+        if (filtered.length === 1) {
+            // 검색 결과가 1명이면 바로 상세 분석 표시
+            const student = filtered[0];
+            const studentSelect = document.getElementById('studentSelect');
+            if (studentSelect) {
+                studentSelect.value = student.number;
+            }
+            this.renderStudentDetail(student);
+            this.switchView('detail');
+        } else if (filtered.length > 1) {
+            // 여러 명이면 테이블만 필터링 (이미 input 이벤트로 처리됨)
+            this.filterStudentTable();
+        }
+    }
+
     switchTab(tabName) {
         // 탭 버튼 활성화
         document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -2463,29 +5968,60 @@ document.addEventListener('DOMContentLoaded', () => {
 
     renderStudentDetail(student) {
         const container = document.getElementById('studentDetailContent');
-        
+    
         // 기존 학급 전체 인쇄 영역 완전 제거
         const classPrintArea = document.getElementById('classPrintArea');
         if (classPrintArea) {
             classPrintArea.remove();
         }
-        
+    
         // 학급 전체 인쇄 관련 클래스 제거
         const studentsTab = document.getElementById('students-tab');
         if (studentsTab) {
             studentsTab.classList.remove('only-class-print', 'print-target');
         }
-        
+    
         // 학점 가중 평균 백분위 계산
         const weightedAveragePercentile = this.calculateWeightedAveragePercentile(student, this.combinedData.subjects);
-        
+    
+        // ★ 추가: 석차 기반 백분위인지, 등급 기반 추정인지 판별
+        const hasRankBasedPercentile = student.ranks 
+            && Object.values(student.ranks).some(r => r !== undefined && r !== null && !isNaN(r));
+        const percentileEstimateNote = (weightedAveragePercentile && !hasRankBasedPercentile)
+            ? '<span class="summary-note">등급 기반 추정치</span>'
+            : '';
+    
         // 평균등급 기준 순위
         const averageGradeRank = student.averageGradeRank;
         const sameGradeCount = student.sameGradeCount;
         const totalGradedStudents = student.totalGradedStudents;
+        const studentSelect = document.getElementById('studentSelect');
+        if (studentSelect) {
+            studentSelect.value = student.number;
+        }
+
+        const filteredStudents = this.getStudentDetailNavigationStudents();
+        const navigationStudents = filteredStudents.some(s => String(s.number) === String(student.number))
+            ? filteredStudents
+            : [student];
+        const navigationIndex = navigationStudents.findIndex(s => String(s.number) === String(student.number));
+        const hasPrevStudent = navigationIndex > 0;
+        const hasNextStudent = navigationIndex >= 0 && navigationIndex < navigationStudents.length - 1;
+        const navigationLabel = navigationStudents.length > 0 && navigationIndex >= 0
+            ? `${navigationIndex + 1} / ${navigationStudents.length}`
+            : '';
+        const usesBusanReference = this.usesBusanNineGradeReference(student, this.combinedData.subjects);
+        const nineGradeReferenceNote = usesBusanReference
+            ? '<span class="summary-note">전북교육청 환산 기준</span>'
+            : '';
         
         const html = `
             <div class="print-controls">
+                <div class="student-nav-controls">
+                    <button class="detail-btn student-nav-btn" data-nav-offset="-1" ${hasPrevStudent ? '' : 'disabled'}>이전 학생</button>
+                    <span class="student-nav-status">${navigationLabel}</span>
+                    <button class="detail-btn student-nav-btn" data-nav-offset="1" ${hasNextStudent ? '' : 'disabled'}>다음 학생</button>
+                </div>
                 <button class="pdf-btn" onclick="scoreAnalyzer.generatePDF('${student.name}')">PDF 저장</button>
             </div>
             
@@ -2533,7 +6069,10 @@ document.addEventListener('DOMContentLoaded', () => {
                                     </div>
                                     <div class="summary-item">
                                         <span class="summary-label">평균등급(9등급환산)</span>
-                                        <span class="summary-value orange">${student.weightedAverage9Grade ? student.weightedAverage9Grade.toFixed(2) : 'N/A'}</span>
+                                        <span class="summary-value-group">
+                                            <span class="summary-value orange">${student.weightedAverage9Grade ? student.weightedAverage9Grade.toFixed(2) : 'N/A'}</span>
+                                            ${nineGradeReferenceNote}
+                                        </span>
                                     </div>
                                     <div class="summary-item">
                                         <span class="summary-label">등급 순위</span>
@@ -2541,7 +6080,10 @@ document.addEventListener('DOMContentLoaded', () => {
                                     </div>
                                     <div class="summary-item">
                                         <span class="summary-label">과목평균 백분위</span>
-                                        <span class="summary-value highlight">${weightedAveragePercentile ? weightedAveragePercentile.toFixed(1) + '%' : 'N/A'}</span>
+                                        <span class="summary-value-group">
+                                            <span class="summary-value highlight">${weightedAveragePercentile ? weightedAveragePercentile.toFixed(1) + '%' : 'N/A'}</span>
+                                            ${percentileEstimateNote}
+                                        </span>
                                     </div>
                                     <div class="summary-item">
                                         <span class="summary-label">전체 학생수</span>
@@ -2568,6 +6110,15 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
         
         container.innerHTML = html;
+
+        container.querySelectorAll('.student-nav-btn').forEach(button => {
+            button.addEventListener('click', () => {
+                const offset = parseInt(button.getAttribute('data-nav-offset'), 10);
+                if (!isNaN(offset)) {
+                    this.navigateStudentDetail(offset);
+                }
+            });
+        });
         
         // 레이더 차트 생성
         setTimeout(() => {
@@ -2578,9 +6129,21 @@ document.addEventListener('DOMContentLoaded', () => {
     // 학급 전체 인쇄용: 개별 학생과 완전히 동일한 HTML 구조
     buildStudentDetailHTMLForPrint(student, canvasId) {
         const weightedAveragePercentile = this.calculateWeightedAveragePercentile(student, this.combinedData.subjects);
+    
+        // ★ 추가
+        const hasRankBasedPercentile = student.ranks 
+            && Object.values(student.ranks).some(r => r !== undefined && r !== null && !isNaN(r));
+        const percentileEstimateNote = (weightedAveragePercentile && !hasRankBasedPercentile)
+            ? '<span class="summary-note">등급 기반 추정치</span>'
+            : '';
+    
         const averageGradeRank = student.averageGradeRank;
         const sameGradeCount = student.sameGradeCount;
         const totalGradedStudents = student.totalGradedStudents;
+        const usesBusanReference = this.usesBusanNineGradeReference(student, this.combinedData.subjects);
+        const nineGradeReferenceNote = usesBusanReference
+            ? '<span class="summary-note">전북교육청 환산 기준</span>'
+            : '';
         return `
             <div class="student-print-page">
                 <div id="printArea-${canvasId}" class="print-area">
@@ -2627,7 +6190,10 @@ document.addEventListener('DOMContentLoaded', () => {
                                         </div>
                                         <div class="summary-item">
                                             <span class="summary-label">평균등급(9등급환산)</span>
-                                            <span class="summary-value orange">${student.weightedAverage9Grade ? student.weightedAverage9Grade.toFixed(2) : 'N/A'}</span>
+                                            <span class="summary-value-group">
+                                                <span class="summary-value orange">${student.weightedAverage9Grade ? student.weightedAverage9Grade.toFixed(2) : 'N/A'}</span>
+                                                ${nineGradeReferenceNote}
+                                            </span>
                                         </div>
                                         <div class="summary-item">
                                             <span class="summary-label">등급 순위</span>
@@ -2635,7 +6201,10 @@ document.addEventListener('DOMContentLoaded', () => {
                                         </div>
                                         <div class="summary-item">
                                             <span class="summary-label">과목평균 백분위</span>
-                                            <span class="summary-value highlight">${weightedAveragePercentile ? weightedAveragePercentile.toFixed(1) + '%' : 'N/A'}</span>
+                                            <span class="summary-value-group">
+                                                <span class="summary-value highlight">${weightedAveragePercentile ? weightedAveragePercentile.toFixed(1) + '%' : 'N/A'}</span>
+                                                ${percentileEstimateNote}
+                                            </span>
                                         </div>
                                         <div class="summary-item">
                                             <span class="summary-label">전체 학생수</span>
@@ -2985,6 +6554,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const groupOrder = this.subjectGroups?.groups || {};
 
         this.combinedData.subjects.forEach(subject => {
+            if (!this.hasStudentSubjectData(student, subject.name)) {
+                return;
+            }
+
             const groupName = this.getSubjectGroup(subject.name);
             if (!groupedSubjects[groupName]) {
                 groupedSubjects[groupName] = {
@@ -2999,6 +6572,10 @@ document.addEventListener('DOMContentLoaded', () => {
         // 교과군 순서대로 정렬
         const sortedGroups = Object.entries(groupedSubjects)
             .sort((a, b) => a[1].order - b[1].order);
+
+        if (sortedGroups.length === 0) {
+            return '<p>표시할 과목 데이터가 없습니다.</p>';
+        }
 
         // 교과군별로 테이블 생성
         return sortedGroups.map(([groupName, groupData]) => {
@@ -3034,12 +6611,29 @@ document.addEventListener('DOMContentLoaded', () => {
         }).join('');
     }
 
+    hasStudentSubjectData(student, subjectName) {
+        const hasOwn = (obj) => obj && Object.prototype.hasOwnProperty.call(obj, subjectName);
+        return hasOwn(student.scores) ||
+            hasOwn(student.achievements) ||
+            hasOwn(student.grades) ||
+            hasOwn(student.ranks) ||
+            hasOwn(student.subjectTotals) ||
+            hasOwn(student.percentiles);
+    }
+
     // 개별 과목 테이블 행 렌더링
     renderSubjectTableRow(student, subject) {
-        const score = student.scores[subject.name] || 0;
-        const achievement = student.achievements[subject.name] || '-';
-        const grade = student.grades ? student.grades[subject.name] : undefined;
-        const rank = student.ranks ? student.ranks[subject.name] || '-' : '-';
+        const hasScore = student.scores && Object.prototype.hasOwnProperty.call(student.scores, subject.name);
+        const score = hasScore ? student.scores[subject.name] : null;
+        const achievement = student.achievements && Object.prototype.hasOwnProperty.call(student.achievements, subject.name)
+            ? student.achievements[subject.name]
+            : '-';
+        const grade = student.grades && Object.prototype.hasOwnProperty.call(student.grades, subject.name)
+            ? student.grades[subject.name]
+            : undefined;
+        const rank = student.ranks && Object.prototype.hasOwnProperty.call(student.ranks, subject.name)
+            ? student.ranks[subject.name]
+            : '-';
         const percentile = student.percentiles && Object.prototype.hasOwnProperty.call(student.percentiles, subject.name)
             ? student.percentiles[subject.name]
             : null;
@@ -3058,7 +6652,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <td class="subject-name-cell">${subject.name}</td>
                 <td class="center">${subject.credits}</td>
                 <td class="center">
-                    <span class="score-value">${score}</span>
+                    <span class="score-value">${score !== null && score !== undefined ? score : '-'}</span>
                     <span class="avg-value">(${subject.average ? subject.average.toFixed(1) : '-'})</span>
                 </td>
                 <td class="center"><span class="achievement-badge ${achievement}">${achievement}</span></td>
@@ -3417,7 +7011,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             // 과목별 등급 (5등급)
             subjects.forEach(subject => {
-                headers.push(subject.name);
+                headers.push(this.getSubjectColumnLabel(subject));
             });
 
             // 교과군별 평균등급
@@ -3543,7 +7137,90 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // 독립형 HTML 파일로 내보내기
-    async exportAsStandaloneHtml() {
+    showHtmlExportOptionsModal() {
+        const existingModal = document.getElementById('htmlExportOptionsModal');
+        if (existingModal) existingModal.remove();
+
+        const modal = document.createElement('div');
+        modal.id = 'htmlExportOptionsModal';
+        modal.style.cssText = `
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.5); display: flex; align-items: center;
+            justify-content: center; z-index: 10000;
+        `;
+        modal.innerHTML = `
+            <div style="background: var(--bg-card, #fff); padding: 30px; border-radius: 16px;
+                        max-width: 440px; width: 92%; box-shadow: 0 10px 40px rgba(0,0,0,0.2);">
+                <h3 style="margin: 0 0 18px 0; color: var(--text-primary, #333); font-size: 1.2rem;">
+                    분석결과 HTML 저장
+                </h3>
+                <p style="margin: 0 0 14px 0; color: var(--text-secondary, #666); line-height: 1.5; font-size: 0.92rem;">
+                    열기 암호를 설정하면 저장 파일을 열 때 먼저 암호를 입력해야 합니다.
+                    비워두면 기존처럼 암호 없이 저장됩니다.
+                </p>
+                <div style="display: grid; gap: 12px; margin-bottom: 10px;">
+                    <label style="display: grid; gap: 6px;">
+                        <span style="font-size: 0.9rem; color: var(--text-primary, #333); font-weight: 600;">열기 암호</span>
+                        <input type="password" id="htmlExportPassword" placeholder="선택 입력"
+                               style="padding: 12px; border: 1px solid var(--neutral-300, #ddd); border-radius: 8px; font-size: 0.95rem;">
+                    </label>
+                    <label style="display: grid; gap: 6px;">
+                        <span style="font-size: 0.9rem; color: var(--text-primary, #333); font-weight: 600;">암호 확인</span>
+                        <input type="password" id="htmlExportPasswordConfirm" placeholder="암호를 다시 입력"
+                               style="padding: 12px; border: 1px solid var(--neutral-300, #ddd); border-radius: 8px; font-size: 0.95rem;">
+                    </label>
+                </div>
+                <p style="margin: 0 0 18px 0; font-size: 0.82rem; color: var(--text-muted, #888); line-height: 1.5;">
+                    이 기능은 최소한의 보호 장치입니다. 암호를 잊으면 저장 파일에서 데이터를 복구할 수 없습니다.
+                </p>
+                <div id="htmlExportOptionsError" style="min-height: 1.2em; margin-bottom: 12px; color: #c0392b; font-size: 0.85rem;"></div>
+                <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                    <button id="cancelHtmlExport" style="padding: 10px 20px; border: 1px solid var(--neutral-300, #ddd);
+                            background: var(--bg-card, #fff); border-radius: 8px; cursor: pointer;
+                            color: var(--text-secondary, #666);">
+                        취소
+                    </button>
+                    <button id="confirmHtmlExport" style="padding: 10px 20px; border: none;
+                            background: linear-gradient(135deg, var(--primary, #8B2942), var(--primary-dark, #6B1D32));
+                            color: white; border-radius: 8px; cursor: pointer; font-weight: 500;">
+                        HTML 다운로드
+                    </button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        const passwordInput = document.getElementById('htmlExportPassword');
+        const confirmInput = document.getElementById('htmlExportPasswordConfirm');
+        const errorDiv = document.getElementById('htmlExportOptionsError');
+        const closeModal = () => modal.remove();
+
+        document.getElementById('cancelHtmlExport').addEventListener('click', closeModal);
+        document.getElementById('confirmHtmlExport').addEventListener('click', async () => {
+            const password = passwordInput ? passwordInput.value : '';
+            const passwordConfirm = confirmInput ? confirmInput.value : '';
+
+            if ((password || passwordConfirm) && password !== passwordConfirm) {
+                if (errorDiv) errorDiv.textContent = '암호와 확인 입력이 일치하지 않습니다.';
+                if (confirmInput) confirmInput.focus();
+                return;
+            }
+
+            closeModal();
+            await this.exportAsStandaloneHtml({ password });
+        });
+
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) closeModal();
+        });
+
+        if (passwordInput) {
+            setTimeout(() => passwordInput.focus(), 0);
+        }
+    }
+
+    async exportAsStandaloneHtml(options = {}) {
         if (!this.combinedData) {
             this.showError('분석 데이터가 없습니다.');
             return;
@@ -3551,7 +7228,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             // 현재 페이지의 HTML을 읽어서 독립형 버전 생성
-            const htmlTemplate = await this.generateStandaloneHtmlTemplate();
+            const htmlTemplate = await this.generateStandaloneHtmlTemplate(options);
             
             // BOM을 추가하여 한글이 제대로 표시되도록 함
             const BOM = '\uFEFF';
@@ -3570,7 +7247,7 @@ document.addEventListener('DOMContentLoaded', () => {
                            String(now.getHours()).padStart(2, '0') + 
                            String(now.getMinutes()).padStart(2, '0');
             
-            link.setAttribute('download', `학생성적분석결과_${dateStr}.html`);
+            link.setAttribute('download', `index_${dateStr}.html`);
             link.style.visibility = 'hidden';
             document.body.appendChild(link);
             link.click();
@@ -3585,9 +7262,297 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    getRuntimeScriptText() {
+        try {
+            if (typeof ScoreAnalyzer === 'function') {
+                return `${ScoreAnalyzer.toString()}
+
+let scoreAnalyzer;
+
+document.addEventListener('DOMContentLoaded', () => {
+    scoreAnalyzer = new ScoreAnalyzer();
+});
+`;
+            }
+        } catch (error) {
+            console.warn('실행 중인 ScoreAnalyzer 소스 추출 실패:', error);
+        }
+
+        return '';
+    }
+
+    escapeInlineScriptContent(text) {
+        if (!text) return '';
+        return String(text).replace(/<\/script/gi, '<\\/script');
+    }
+
+    arrayBufferToBase64(buffer) {
+        const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+        let binary = '';
+        const chunkSize = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunkSize) {
+            binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+        }
+        return btoa(binary);
+    }
+
+    async derivePasswordKey(password, salt, keyUsages) {
+        if (!window.crypto || !window.crypto.subtle) {
+            throw new Error('현재 브라우저는 암호 보호 HTML 저장을 지원하지 않습니다.');
+        }
+
+        const encoder = new TextEncoder();
+        const baseKey = await crypto.subtle.importKey(
+            'raw',
+            encoder.encode(password),
+            'PBKDF2',
+            false,
+            ['deriveKey']
+        );
+
+        return crypto.subtle.deriveKey(
+            {
+                name: 'PBKDF2',
+                salt,
+                iterations: 250000,
+                hash: 'SHA-256'
+            },
+            baseKey,
+            {
+                name: 'AES-GCM',
+                length: 256
+            },
+            false,
+            keyUsages
+        );
+    }
+
+    async encryptExportPayload(password, payload) {
+        const encoder = new TextEncoder();
+        const salt = crypto.getRandomValues(new Uint8Array(16));
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+        const key = await this.derivePasswordKey(password, salt, ['encrypt']);
+        const ciphertext = await crypto.subtle.encrypt(
+            {
+                name: 'AES-GCM',
+                iv
+            },
+            key,
+            encoder.encode(JSON.stringify(payload))
+        );
+
+        return {
+            salt: this.arrayBufferToBase64(salt),
+            iv: this.arrayBufferToBase64(iv),
+            ciphertext: this.arrayBufferToBase64(ciphertext),
+            iterations: 250000
+        };
+    }
+
+    buildProtectedHtmlBootstrap(encryptedPayload) {
+        return `
+(() => {
+    const encryptedPayload = ${JSON.stringify(encryptedPayload)};
+    const LOCK_CLASS = 'protected-export-locked';
+    window.APP_BUILD_UTC = new Date().toISOString();
+
+    const style = document.createElement('style');
+    style.textContent = \`
+body.\${LOCK_CLASS} .container { visibility: hidden !important; }
+#protectedExportOverlay {
+    position: fixed;
+    inset: 0;
+    z-index: 20000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgba(15, 23, 42, 0.55);
+    backdrop-filter: blur(8px);
+}
+#protectedExportOverlay .overlay-card {
+    width: min(100%, 420px);
+    background: #ffffff;
+    border-radius: 20px;
+    padding: 28px;
+    box-shadow: 0 24px 60px rgba(15, 23, 42, 0.22);
+    border: 1px solid rgba(15, 23, 42, 0.08);
+}
+#protectedExportOverlay h2 {
+    margin: 0 0 10px 0;
+    font-size: 1.25rem;
+    color: #0f172a;
+}
+#protectedExportOverlay p {
+    margin: 0 0 16px 0;
+    color: #475569;
+    line-height: 1.55;
+    font-size: 0.93rem;
+}
+#protectedExportOverlay input {
+    width: 100%;
+    padding: 12px 14px;
+    border-radius: 10px;
+    border: 1px solid #cbd5e1;
+    font-size: 1rem;
+    margin-bottom: 12px;
+    box-sizing: border-box;
+}
+#protectedExportOverlay button {
+    width: 100%;
+    border: none;
+    border-radius: 10px;
+    padding: 12px 14px;
+    background: #10A37F;
+    color: #ffffff;
+    font-size: 0.98rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+#protectedExportOverlay button:disabled {
+    opacity: 0.6;
+    cursor: wait;
+}
+#protectedExportStatus {
+    min-height: 1.2em;
+    margin-top: 12px;
+    color: #b91c1c;
+    font-size: 0.88rem;
+}
+\`;
+    document.head.appendChild(style);
+    document.body.classList.add(LOCK_CLASS);
+
+    const overlay = document.createElement('div');
+    overlay.id = 'protectedExportOverlay';
+    overlay.innerHTML = \`
+        <div class="overlay-card">
+            <h2>암호 보호된 분석 결과</h2>
+            <p>이 파일은 암호가 맞아야 분석 결과를 복호화해서 보여줍니다.</p>
+            <input id="protectedExportPassword" type="password" placeholder="열기 암호 입력" autocomplete="current-password">
+            <button id="protectedExportUnlock">열기</button>
+            <div id="protectedExportStatus"></div>
+        </div>
+    \`;
+    document.body.appendChild(overlay);
+
+    const passwordInput = document.getElementById('protectedExportPassword');
+    const unlockButton = document.getElementById('protectedExportUnlock');
+    const statusEl = document.getElementById('protectedExportStatus');
+
+    const base64ToBytes = (base64) => {
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i);
+        }
+        return bytes;
+    };
+
+    const unlock = async () => {
+        const password = passwordInput ? passwordInput.value : '';
+        if (!password) {
+            if (statusEl) statusEl.textContent = '암호를 입력하세요.';
+            if (passwordInput) passwordInput.focus();
+            return;
+        }
+
+        unlockButton.disabled = true;
+        if (statusEl) statusEl.textContent = '암호 확인 중...';
+
+        try {
+            const salt = base64ToBytes(encryptedPayload.salt);
+            const iv = base64ToBytes(encryptedPayload.iv);
+            const ciphertext = base64ToBytes(encryptedPayload.ciphertext);
+            const encoder = new TextEncoder();
+            const baseKey = await crypto.subtle.importKey(
+                'raw',
+                encoder.encode(password),
+                'PBKDF2',
+                false,
+                ['deriveKey']
+            );
+            const key = await crypto.subtle.deriveKey(
+                {
+                    name: 'PBKDF2',
+                    salt,
+                    iterations: encryptedPayload.iterations,
+                    hash: 'SHA-256'
+                },
+                baseKey,
+                {
+                    name: 'AES-GCM',
+                    length: 256
+                },
+                false,
+                ['decrypt']
+            );
+            const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext);
+            const payload = JSON.parse(new TextDecoder().decode(decrypted));
+
+            window.PRELOADED_DATA = payload.analysisData;
+            window.PRELOADED_SUBJECT_GROUPS = payload.subjectGroups;
+            window.PRELOADED_UI_STATE = payload.uiState;
+
+            document.body.classList.remove(LOCK_CLASS);
+            overlay.remove();
+
+            const initializeDecryptedView = async () => {
+                if (typeof scoreAnalyzer !== 'undefined' && scoreAnalyzer && typeof scoreAnalyzer.initializePreloadedView === 'function') {
+                    scoreAnalyzer.subjectGroups = payload.subjectGroups || scoreAnalyzer.subjectGroups;
+                    scoreAnalyzer.subjectGroupsReady = Promise.resolve(scoreAnalyzer.subjectGroups);
+                    await scoreAnalyzer.initializePreloadedView();
+                } else if (typeof ScoreAnalyzer === 'function') {
+                    scoreAnalyzer = new ScoreAnalyzer();
+                }
+            };
+
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', () => {
+                    initializeDecryptedView();
+                }, { once: true });
+            } else {
+                await initializeDecryptedView();
+            }
+        } catch (error) {
+            if (statusEl) statusEl.textContent = '암호가 올바르지 않거나 파일이 손상되었습니다.';
+            if (passwordInput) {
+                passwordInput.focus();
+                passwordInput.select();
+            }
+        } finally {
+            unlockButton.disabled = false;
+        }
+    };
+
+    unlockButton.addEventListener('click', () => {
+        unlock();
+    });
+
+    if (passwordInput) {
+        passwordInput.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                unlock();
+            }
+        });
+        setTimeout(() => passwordInput.focus(), 0);
+    }
+})();
+`;
+    }
+
     // 독립형 HTML 템플릿 생성
-    async generateStandaloneHtmlTemplate() {
+    async generateStandaloneHtmlTemplate(options = {}) {
         const analysisData = JSON.stringify(this.combinedData);
+        const subjectGroupsData = JSON.stringify(this.subjectGroups || null);
+        const uiState = JSON.stringify(this.getCurrentUiState());
+        const password = typeof options.password === 'string' ? options.password : '';
+
+        // HTML 저장 시 업로드 섹션 임시 숨김
+        const uploadSection = document.querySelector('.upload-section');
+        const wasHidden = uploadSection ? uploadSection.style.display : '';
+        if (uploadSection) uploadSection.style.display = 'none';
 
         // 원본 index.html, style.css, script.js를 그대로 사용하여 완전 동일한 구조로 생성
         const fetchText = async (url) => {
@@ -3601,9 +7566,8 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         };
 
-        const [indexHtml, cssText, jsText, xlsx, chart, datalabels, jszip, jspdf, html2canvas] = await Promise.all([
+        const [indexHtml, jsText, xlsx, chart, datalabels, jszip, jspdf, html2canvas] = await Promise.all([
             fetchText('index.html'),
-            fetchText('style.css'),
             fetchText('script.js'),
             fetchText('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'),
             fetchText('https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js'),
@@ -3612,9 +7576,11 @@ document.addEventListener('DOMContentLoaded', () => {
             fetchText('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js'),
             fetchText('https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js')
         ]);
+        const cssText = await this.getStyleCSS();
+        const runtimeJsText = (jsText && jsText.trim()) ? jsText : this.getRuntimeScriptText();
 
         // DOMParser로 원본 index.html을 파싱하여 안전하게 조작
-        const htmlSource = indexHtml || document.documentElement.outerHTML;
+        const htmlSource = document.documentElement?.outerHTML || indexHtml;
         const parser = new DOMParser();
         const doc = parser.parseFromString(htmlSource, 'text/html');
 
@@ -3642,20 +7608,42 @@ document.addEventListener('DOMContentLoaded', () => {
             const srcAttr = s.getAttribute('src');
             if (inlineMap.has(srcAttr) && inlineMap.get(srcAttr)) {
                 const inline = doc.createElement('script');
-                inline.textContent = inlineMap.get(srcAttr);
+                inline.textContent = this.escapeInlineScriptContent(inlineMap.get(srcAttr));
                 s.replaceWith(inline);
             }
         });
+
+        // ── HTML 저장용: 업로드 섹션 숨기고, 분석결과는 표시 ──
+        const exportUploadSection = doc.querySelector('.upload-section');
+        if (exportUploadSection) {
+            exportUploadSection.style.display = 'none';
+        }
+        // 분석결과가 보이도록 설정
+        const exportResults = doc.getElementById('results');
+        if (exportResults) {
+            exportResults.style.display = 'block';
+        }
 
         // 3) script.js 인라인 및 PRELOADED_DATA 주입
         try {
             const appScript = doc.querySelector('script[src="script.js"]');
             const preload = doc.createElement('script');
-            preload.textContent = `window.APP_BUILD_UTC = new Date().toISOString();\nwindow.PRELOADED_DATA = ${analysisData};`;
+            let preloadScript = `window.APP_BUILD_UTC = new Date().toISOString();\nwindow.PRELOADED_DATA = ${analysisData};\nwindow.PRELOADED_SUBJECT_GROUPS = ${subjectGroupsData};\nwindow.PRELOADED_UI_STATE = ${uiState};\nwindow.PRELOADED_HIDE_UPLOAD = true;`;
+            if (password) {
+                const encryptedPayload = await this.encryptExportPayload(password, {
+                    analysisData: this.combinedData,
+                    subjectGroups: this.subjectGroups || null,
+                    uiState: this.getCurrentUiState()
+                });
+                preloadScript = this.buildProtectedHtmlBootstrap(encryptedPayload);
+            }
+            preload.textContent = this.escapeInlineScriptContent(preloadScript);
             const inline = doc.createElement('script');
-            // jsText가 없을 때는 독립형 Standalone 스크립트(getScriptJS)로 대체하여 동일 렌더링 보장
-            const inlineJs = jsText && jsText.trim() ? jsText : (this.getScriptJS ? (await this.getScriptJS()) : '');
-            inline.textContent = inlineJs;
+            if (!runtimeJsText || !runtimeJsText.trim()) {
+                console.warn('동작 스크립트를 확보하지 못해 현재 화면 스냅샷으로 저장합니다.');
+                return await this.generateExactSnapshotHtmlTemplate();
+            }
+            inline.textContent = this.escapeInlineScriptContent(runtimeJsText);
             if (appScript) {
                 appScript.replaceWith(preload);
                 preload.after(inline);
@@ -3664,6 +7652,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 doc.body.appendChild(inline);
             }
         } catch (_) {}
+        // 업로드 섹션 복원
+        if (uploadSection) uploadSection.style.display = wasHidden;
 
         return '<!DOCTYPE html>' + doc.documentElement.outerHTML;
     }
@@ -3675,7 +7665,12 @@ document.addEventListener('DOMContentLoaded', () => {
             const res = await fetch('style.css', { cache: 'no-cache' });
             if (res && res.ok) {
                 const text = await res.text();
-                if (text && text.trim().length > 0) return text;
+                // 올바른 테마인지 확인 (보라색 primary 색상)
+                if (text && text.trim().length > 0 && text.includes('#5F4A8B')) return text;
+                // 내용이 있어도 구버전 테마면 내장 CSS 사용
+                if (text && text.trim().length > 0) {
+                    console.warn('로드된 style.css가 현재 테마와 다릅니다. 내장 CSS를 사용합니다.');
+                }
             }
         } catch (_) {
             // 무시하고 다음 방법 시도
@@ -3699,19 +7694,105 @@ document.addEventListener('DOMContentLoaded', () => {
                     continue;
                 }
             }
-            if (cssText.trim()) return cssText;
+            if (cssText.trim() && cssText.includes('#5F4A8B')) return cssText;
         } catch (_) {
             // 넘어가서 내장 CSS 사용
         }
 
-        // 3) 최종 Fallback: 내장 CSS
-        console.warn('style.css를 읽지 못해 내장 CSS로 대체합니다.');
+        // 3) 현재 페이지의 <style> 태그에서 직접 CSS 텍스트 추출
+        //    (저장된 HTML 스냅샷 또는 인라인 CSS가 있을 때)
+        try {
+            const styleTags = document.querySelectorAll('style');
+            let cssText = '';
+            for (let i = 0; i < styleTags.length; i++) {
+                const text = styleTags[i].textContent || '';
+                if (text.trim().length > 100 && text.includes('#5F4A8B')) {
+                    cssText += text + '\n';
+                }
+            }
+            if (cssText.trim()) {
+                console.log('style 태그에서 올바른 테마 CSS 추출 성공 (' + cssText.length + ' chars)');
+                return cssText;
+            }
+        } catch (_) {
+            // 넘어가서 내장 CSS 사용
+        }
+
+        // 4) 최종 Fallback: 내장 CSS (항상 최신 보라색 테마 보장)
+        console.log('내장 CSS(최신 테마)를 사용합니다.');
         return this.getBuiltInCSS();
     }
 
-    // 내장 CSS 스타일
+    // 내장 CSS 스타일 (현재 style.css와 동기화됨)
     getBuiltInCSS() {
-        return `
+        return `/* ========================================
+   Modern Clean Theme
+   ======================================== */
+
+:root {
+    --primary: #5F4A8B;
+    --primary-light: #7B62A8;
+    --primary-dark: #483670;
+    --primary-bg: rgba(95, 74, 139, 0.08);
+
+    --accent: #7B62A8;
+    --accent-light: #9578C4;
+    --accent-muted: #E8E0F4;
+    --accent-bg: rgba(123, 98, 168, 0.08);
+
+    --neutral-50: #FCFCFD;
+    --neutral-100: #F8F7FA;
+    --neutral-200: #EEEDF2;
+    --neutral-300: #DDDBE5;
+    --neutral-400: #B8B4C4;
+    --neutral-500: #7E7891;
+    --neutral-600: #585269;
+    --neutral-700: #36314A;
+    --neutral-800: #1A1626;
+
+    --success: #15803D;
+    --success-light: #16A34A;
+    --success-bg: rgba(21, 128, 61, 0.1);
+
+    --info: #2563EB;
+    --info-light: #3B82F6;
+    --info-bg: rgba(37, 99, 235, 0.1);
+
+    --warning: #D97706;
+    --warning-light: #F59E0B;
+    --warning-bg: rgba(217, 119, 6, 0.12);
+
+    --bg-body: radial-gradient(circle at top, #FFFFFF 0%, #F6F5F9 42%, #EEEDF2 100%);
+    --bg-card: #FFFFFF;
+    --bg-card-hover: #FFFFFF;
+    --bg-section: linear-gradient(180deg, #FFFFFF 0%, #F8F7FA 100%);
+
+    --text-primary: #1A1626;
+    --text-secondary: #585269;
+    --text-muted: #7E7891;
+    --text-inverse: #FFFFFF;
+
+    --border-light: rgba(95, 74, 139, 0.08);
+    --border-medium: rgba(95, 74, 139, 0.14);
+    --border-accent: rgba(95, 74, 139, 0.18);
+
+    --shadow-sm: 0 1px 2px rgba(95, 74, 139, 0.06);
+    --shadow-md: 0 8px 24px rgba(95, 74, 139, 0.08);
+    --shadow-lg: 0 16px 36px rgba(95, 74, 139, 0.10);
+    --shadow-xl: 0 24px 64px rgba(95, 74, 139, 0.12);
+
+    --radius-sm: 10px;
+    --radius-md: 14px;
+    --radius-lg: 20px;
+    --radius-xl: 28px;
+
+    --grade-1: #15803D;
+    --grade-2: #5F4A8B;
+    --grade-3: #0369A1;
+    --grade-4: #D97706;
+    --grade-5: #7E7891;
+}
+
 * {
     margin: 0;
     padding: 0;
@@ -3719,74 +7800,429 @@ document.addEventListener('DOMContentLoaded', () => {
 }
 
 body {
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    background: linear-gradient(180deg, #f7f9fc 0%, #eef2f7 100%);
+    font-family: 'Pretendard Variable', 'Pretendard', 'SUIT Variable', 'Noto Sans KR', sans-serif;
+    background: var(--bg-body);
     min-height: 100vh;
-    padding: 20px;
+    padding: 18px;
+    position: relative;
+    overflow-x: hidden;
+    color: var(--text-primary);
 }
 
 .container {
-    max-width: 1200px;
+    max-width: 1320px;
     margin: 0 auto;
-    background: white;
-    border-radius: 15px;
-    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+    background: var(--bg-card);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-xl);
     overflow: hidden;
+    position: relative;
+    border: 1px solid var(--border-light);
 }
 
 header {
-    background: #8fbaf7;
-    color: white;
-    padding: 40px;
+    background: linear-gradient(135deg, #5F4A8B 0%, #483670 50%, #36314A 100%);
+    color: var(--text-inverse);
+    padding: 40px 36px 36px;
     text-align: center;
+    border-bottom: none;
+    position: relative;
+    overflow: hidden;
+}
+
+header::before {
+    content: '✦';
+    position: absolute;
+    top: 16px;
+    right: 24px;
+    font-size: 1.5rem;
+    opacity: 0.3;
+    color: #FFFFFF;
 }
 
 header h1 {
-    font-size: 2.5rem;
-    margin-bottom: 10px;
-    font-weight: 300;
+    font-size: 2rem;
+    margin-bottom: 6px;
+    font-weight: 600;
+    letter-spacing: -0.04em;
+    position: relative;
+    color: #FFFFFF;
+}
+
+.header-subtitle {
+    font-size: 1rem;
+    color: rgba(255, 255, 255, 0.85);
+    max-width: 720px;
+    line-height: 1.6;
+    margin: 0 auto;
 }
 
 .badge-lite {
     display: inline-block;
     margin-left: 10px;
     padding: 4px 10px;
-    font-size: 0.9rem;
-    font-weight: 700;
-    color: #ffffff;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    font-size: 0.74rem;
+    font-weight: 600;
+    color: #FFFFFF;
+    background: rgba(255, 255, 255, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.4);
     border-radius: 999px;
-    letter-spacing: 0.3px;
+    letter-spacing: 0.08em;
+    vertical-align: middle;
+    text-transform: uppercase;
+}
+
+.upload-section {
+    padding: 32px 36px;
+    text-align: center;
+    border-bottom: 1px solid var(--neutral-200);
+    position: relative;
+    background: linear-gradient(180deg, var(--neutral-50) 0%, var(--bg-card) 100%);
+}
+
+.container.post-analysis .upload-guide,
+.container.post-analysis .section-divider,
+.container.post-analysis .file-input-wrapper,
+.container.post-analysis #fileList,
+.container.post-analysis #analyzeBtn {
+    display: none !important;
+}
+
+.file-input-wrapper {
+    margin-bottom: 30px;
+}
+
+.file-input-wrapper input[type="file"] {
+    display: none;
+}
+
+.file-input-label {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: min(100%, 720px);
+    min-height: 88px;
+    margin: 0 auto;
+    padding: 18px 28px;
+    background: var(--bg-card);
+    border: 1.5px dashed var(--neutral-300);
+    border-radius: var(--radius-lg);
+    cursor: pointer;
+    transition: all 0.25s ease;
+    font-size: 1rem;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.upload-hint {
+    margin-top: 12px;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+}
+
+.file-input-label:hover {
+    background: var(--neutral-50);
+    border-color: var(--primary);
+    color: var(--primary-dark);
+}
+
+.file-input-label.dragover {
+    background: var(--primary-bg);
+    border-color: var(--primary);
+    color: var(--primary);
+    box-shadow: 0 0 0 4px var(--primary-bg) inset;
+}
+
+/* 업로드 섹션 전체 드래그오버 강조 및 오버레이 안내 */
+.upload-section.dragover {
+    border: 1.5px dashed var(--primary);
+    border-radius: var(--radius-lg);
+    background: var(--primary-bg);
+}
+.upload-section.dragover::after {
+    content: '여기에 파일을 드롭하세요';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    color: var(--primary);
+    font-weight: 600;
+    font-size: 1rem;
+    padding: 12px 18px;
+    background: var(--bg-card);
+    border: 1px solid var(--primary-light);
+    border-radius: var(--radius-sm);
+    pointer-events: none;
+    box-shadow: var(--shadow-lg);
+}
+
+.analyze-btn {
+    background: var(--primary);
+    color: var(--text-inverse);
+    border: 1px solid transparent;
+    padding: 12px 22px;
+    border-radius: 999px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.25s ease;
+    box-shadow: none;
+}
+
+.analyze-btn:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+    background: var(--primary-dark);
+}
+
+.analyze-btn:active:not(:disabled) {
+    transform: translateY(0);
+}
+
+.analyze-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    background: var(--neutral-400);
+    box-shadow: none;
+}
+
+.action-buttons {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.secondary-btn {
+    background: var(--bg-card);
+    color: var(--text-primary);
+    border-color: var(--neutral-300);
+}
+
+.secondary-btn:hover:not(:disabled) {
+    background: var(--neutral-100);
+    color: var(--text-primary);
+    box-shadow: var(--shadow-sm);
+}
+
+.export-btn {
+    background: var(--bg-card);
+    color: var(--primary);
+    border: 2px solid var(--primary);
+    padding: 13px 32px;
+    border-radius: var(--radius-lg);
+    font-size: 1rem;
+    cursor: pointer;
+    transition: all 0.25s ease;
+}
+
+.export-btn:hover:not(:disabled) {
+    background: var(--primary);
+    color: var(--text-inverse);
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-lg);
+}
+
+.export-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.upload-guide {
+    background: var(--bg-card);
+    border: 1px solid var(--neutral-200);
+    padding: 22px 24px;
+    margin: 0 auto 18px;
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+    max-width: 920px;
+    text-align: left;
+}
+
+.upload-guide p {
+    margin: 0;
+    color: var(--text-secondary);
+    line-height: 1.6;
+}
+
+.guide-title {
+    color: var(--text-primary);
+    margin-bottom: 8px !important;
+    font-size: 1rem;
+    font-weight: 700;
+}
+
+.upload-guide strong {
+    color: var(--text-primary);
+}
+
+.section-divider {
+    height: 1px;
+    background: linear-gradient(90deg, rgba(0,0,0,0.06), rgba(0,0,0,0.12), rgba(0,0,0,0.06));
+    margin: 16px 0 22px 0;
+    border: none;
+}
+
+.warning-text {
+    color: var(--warning);
+    font-weight: 600;
+    font-size: 0.95rem;
+    margin-top: 10px;
+    text-align: left;
+    padding: 8px 12px;
+    background-color: var(--warning-bg);
+    border-radius: var(--radius-md);
+    border-left: 4px solid var(--warning);
+}
+
+/* 강조 색상: XLS vs XLS data 구분 표시 */
+.warning-text .xls {
+    color: var(--warning);
+    background: rgba(217, 119, 6, 0.12);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 800;
+}
+.warning-text .xlsdata {
+    color: var(--success);
+    background: var(--success-bg);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 800;
+}
+
+.privacy-notice {
+    margin-top: 10px;
+    padding: 14px 16px;
+    border-radius: var(--radius-md);
+    background: var(--neutral-100);
+    border: 1px solid var(--neutral-200);
+    color: var(--text-secondary);
+}
+.privacy-notice p {
+    margin: 0 0 8px 0;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+.privacy-notice ul {
+    margin: 0;
+    padding-left: 18px;
+    list-style: disc;
+    color: var(--text-secondary);
+}
+.privacy-notice li {
+    margin: 3px 0;
+    line-height: 1.5;
+}
+.privacy-notice .privacy-footnote {
+    color: var(--text-muted);
+    opacity: 1;
+    margin-top: 8px;
 }
 
 .results-section {
-    padding: 40px;
+    padding: 28px 36px 36px;
+}
+
+/* 하단 크레딧 푸터 */
+.app-footer {
+    padding: 16px 36px 24px 36px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    border-top: 1px solid var(--neutral-200);
+    background: none;
+}
+.app-footer .footer-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+.app-footer .credits {
+    text-align: right;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    background: none;
+    padding: 0;
+    border-radius: 0;
+}
+.app-footer .credits a:not(.help-btn) {
+    color: var(--text-muted);
+    text-decoration: none;
+    border-bottom: 1px dashed var(--neutral-400);
+}
+.app-footer .credits a:not(.help-btn):hover {
+    color: var(--text-primary);
+    border-bottom-color: var(--neutral-500);
+}
+
+/* last updated 표시 */
+.app-footer .updated {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-left: 8px;
+}
+
+/* 도움말 버튼 */
+.help-btn {
+    display: inline-block;
+    padding: 6px 12px;
+    font-size: 0.85rem;
+    line-height: 1;
+    border-radius: 999px;
+    color: var(--primary);
+    background: var(--bg-card);
+    border: 1px solid var(--primary);
+    text-decoration: none;
+    transition: all 0.2s ease;
+}
+.help-btn:hover {
+    color: var(--text-inverse);
+    background: var(--primary);
+    border-color: var(--primary);
+    box-shadow: var(--shadow-sm);
 }
 
 .tabs {
     display: flex;
-    border-bottom: 1px solid #ddd;
+    gap: 0;
+    padding: 0;
+    background: none;
+    border: none;
+    border-bottom: 2px solid var(--neutral-200);
+    border-radius: 0;
     margin-bottom: 30px;
 }
 
 .tab-btn {
-    padding: 12px 24px;
+    flex: 1;
+    min-width: 0;
+    padding: 14px 18px;
+    background: none;
     border: none;
-    background: transparent;
-    cursor: pointer;
-    font-size: 16px;
     border-bottom: 3px solid transparent;
-    transition: all 0.3s ease;
-}
-
-.tab-btn:hover {
-    background-color: #f5f5f5;
+    cursor: pointer;
+    font-size: 0.95rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    transition: all 0.25s ease;
+    border-radius: 0;
+    position: relative;
+    margin-bottom: -2px;
 }
 
 .tab-btn.active {
-    background-color: #8fbaf7;
-    color: white;
-    border-bottom-color: #667eea;
+    color: var(--primary);
+    background: none;
+    box-shadow: none;
+    border-bottom-color: var(--primary);
+    font-weight: 700;
+}
+
+.tab-btn:hover:not(.active) {
+    background: none;
+    color: var(--text-primary);
+    border-bottom-color: var(--neutral-300);
 }
 
 .tab-content {
@@ -3797,210 +8233,1988 @@ header h1 {
     display: block;
 }
 
+.tab-content h2 {
+    color: var(--text-primary);
+    margin-bottom: 22px;
+    font-size: 1.45rem;
+    font-weight: 600;
+}
+
+
 .subject-averages {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
     gap: 20px;
+}
+
+.subject-item {
+    background: linear-gradient(180deg, var(--bg-card) 0%, var(--neutral-50) 100%);
+    border-radius: var(--radius-lg);
+    padding: 22px;
+    border: 1px solid var(--neutral-200);
+    transition: all 0.25s ease;
+    box-shadow: none;
+}
+
+.subject-item:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+}
+
+.subject-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+}
+
+.subject-header h3 {
+    color: var(--text-primary);
+    font-size: 1.15rem;
+    font-weight: 600;
+}
+
+.credits {
+    background: var(--neutral-100);
+    color: var(--text-secondary);
+    padding: 5px 10px;
+    border-radius: 15px;
+    border: 1px solid var(--neutral-200);
+    font-size: 0.8rem;
+    font-weight: 500;
+}
+
+.average-score {
+    text-align: center;
+}
+
+.average-score .score {
+    display: block;
+    font-size: 2.2rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 5px;
+}
+
+.average-score .label {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.achievement-bars {
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 1px solid var(--neutral-200);
+}
+
+.achievement-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.achievement-label {
+    width: 25px;
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    text-align: center;
+}
+
+.achievement-bar-container {
+    flex: 1;
+    height: 20px;
+    background: var(--neutral-200);
+    border-radius: 10px;
+    overflow: hidden;
+    position: relative;
+}
+
+.achievement-bar-fill {
+    height: 100%;
+    border-radius: 10px;
+    transition: width 0.8s ease;
+    min-width: 2px;
+}
+
+.achievement-bar:nth-child(1) .achievement-bar-fill { background: linear-gradient(135deg, var(--success), var(--success-light)); }
+.achievement-bar:nth-child(2) .achievement-bar-fill { background: linear-gradient(135deg, var(--info), var(--info-light)); }
+.achievement-bar:nth-child(3) .achievement-bar-fill { background: linear-gradient(135deg, var(--accent), var(--accent-light)); }
+.achievement-bar:nth-child(4) .achievement-bar-fill { background: linear-gradient(135deg, var(--warning), var(--primary-light)); }
+.achievement-bar:nth-child(5) .achievement-bar-fill { background: linear-gradient(135deg, var(--primary), var(--primary-dark)); }
+
+.achievement-percentage {
+    width: 50px;
+    text-align: right;
+    font-weight: 500;
+    color: var(--text-primary);
+    font-size: 0.85rem;
+}
+
+.achievement-distribution {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+    gap: 30px;
+}
+
+.distribution-item {
+    background: var(--bg-card);
+    border-radius: var(--radius-md);
+    padding: 25px;
+    box-shadow: var(--shadow-sm);
+    transition: all 0.25s ease;
+}
+
+.distribution-item:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+}
+
+.distribution-item h3 {
+    color: var(--text-primary);
+    margin-bottom: 20px;
+    font-size: 1.3rem;
+    font-weight: 500;
+}
+
+.distribution-bars {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.grade-bar {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+.grade-label {
+    width: 30px;
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 1.1rem;
+}
+
+.bar-container {
+    flex: 1;
+    height: 25px;
+    background: var(--neutral-200);
+    border-radius: 15px;
+    overflow: hidden;
+    position: relative;
+}
+
+.bar {
+    height: 100%;
+    background: linear-gradient(135deg, var(--info) 0%, var(--info-light) 100%);
+    border-radius: 15px;
+    transition: width 0.8s ease;
+    min-width: 2px;
+}
+
+.percentage {
+    width: 60px;
+    text-align: right;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.student-analysis {
+    width: 100%;
+}
+
+.search-box {
+    margin-bottom: 25px;
+}
+
+.search-box input {
+    width: 100%;
+    max-width: 400px;
+    padding: 14px 18px;
+    border: 1px solid var(--neutral-300);
+    border-radius: 14px;
+    font-size: 1rem;
+    outline: none;
+    transition: all 0.25s ease;
+    background: var(--bg-card);
+}
+
+.search-box input:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px var(--primary-bg);
+}
+
+.students-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+    gap: 18px;
     margin-top: 20px;
 }
 
-.subject-card {
-    background: #f9f9f9;
-    padding: 20px;
+.student-card {
+    background: var(--bg-card);
+    border-radius: var(--radius-lg);
+    box-shadow: none;
+    border: 1px solid var(--neutral-200);
+    transition: all 0.25s ease;
+    overflow: hidden;
+}
+
+.student-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+}
+
+.student-card-header {
+    background: linear-gradient(135deg, #5F4A8B 0%, #483670 100%);
+    color: var(--text-inverse);
+    padding: 16px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    border-bottom: none;
+}
+
+.student-basic-info {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.student-basic-info h4 {
+    margin: 0;
+    font-size: 1.2rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.student-number {
+    font-size: 0.88rem;
+    color: var(--text-secondary);
+    opacity: 1;
+}
+
+.student-summary {
+    display: flex;
+    flex-direction: row;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.summary-row {
+    display: contents;
+}
+
+.summary-metric-inline {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: var(--neutral-100);
+    border: 1px solid var(--neutral-200);
+    padding: 4px 8px;
+    border-radius: 6px;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.summary-metric-inline .metric-label {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+}
+
+.summary-metric-inline .metric-value {
+    font-size: 0.9rem;
+    font-weight: 700;
+    white-space: nowrap;
+    color: var(--text-primary);
+}
+
+.summary-metric {
+    text-align: center;
+    background: rgba(255, 255, 255, 0.15);
+    padding: 8px 12px;
     border-radius: 8px;
-    border-left: 4px solid #8fbaf7;
+    min-width: 70px;
+}
+
+.summary-metric .metric-label {
+    display: block;
+    font-size: 0.7rem;
+    opacity: 0.8;
+    margin-bottom: 2px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.summary-metric .metric-value {
+    display: block;
+    font-size: 1.1rem;
+    font-weight: 700;
+}
+
+.student-subjects {
+    padding: 15px 20px;
+    max-height: none;
+    overflow: visible;
+}
+
+.subject-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--neutral-200);
+}
+
+.subject-row:last-child {
+    border-bottom: none;
+}
+
+.subject-row.no-grade {
+    opacity: 0.7;
 }
 
 .subject-name {
+    font-weight: 500;
+    color: var(--text-primary);
+    flex: 1;
+    font-size: 0.9rem;
+}
+
+.subject-data {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.subject-score {
+    font-weight: 600;
+    color: var(--primary);
+    font-size: 0.85rem;
+    min-width: 45px;
+    text-align: right;
+}
+
+.subject-achievement {
+    font-size: 0.8rem;
+    padding: 2px 6px;
+    border-radius: 3px;
+    min-width: 20px;
+    text-align: center;
+}
+
+.subject-grade {
+    font-weight: 500;
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    min-width: 35px;
+    text-align: center;
+}
+
+.subject-percentile {
+    font-weight: 500;
+    color: var(--success);
+    font-size: 0.8rem;
+    min-width: 40px;
+    text-align: right;
+}
+
+/* ── 학생 카드: 새 뱃지 레이아웃 ── */
+.student-card-title-row {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.student-card-name {
+    margin: 0;
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: #FFFFFF;
+    white-space: nowrap;
+}
+
+.student-card-class {
+    font-size: 0.8rem;
+    color: rgba(255, 255, 255, 0.75);
+    white-space: nowrap;
+}
+
+.student-card-badges {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.card-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    background: rgba(255, 255, 255, 0.15);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 8px;
+    white-space: nowrap;
+    flex-shrink: 0;
+    transition: border-color 0.2s ease;
+}
+
+.card-badge:hover {
+    border-color: var(--neutral-300);
+}
+
+.card-badge-label {
+    font-size: 0.68rem;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.7);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.card-badge-value {
+    font-size: 0.88rem;
+    font-weight: 700;
+    color: #FFFFFF;
+}
+
+.card-badge-value.primary {
+    color: #FFFFFF;
+}
+
+.card-badge-value.accent {
+    color: #E8E0F4;
+}
+
+.card-badge-value small {
+    font-size: 0.7rem;
+    font-weight: 500;
+    color: var(--text-muted);
+}
+
+.student-card-footer {
+    background: var(--bg-card);
+    padding: 15px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-top: 1px solid var(--neutral-200);
+}
+
+.grade-subjects-count {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.view-detail-btn {
+    background: var(--bg-card);
+    color: var(--text-primary);
+    border: 1px solid var(--neutral-300);
+    padding: 8px 16px;
+    border-radius: var(--radius-sm);
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: all 0.25s ease;
+    font-weight: 500;
+}
+
+.view-detail-btn:hover {
+    transform: translateY(-1px);
+    border-color: var(--primary);
+    color: var(--primary-dark);
+    box-shadow: var(--shadow-sm);
+}
+
+.achievement.A {
+    background: var(--success);
+    color: var(--text-inverse);
     font-weight: bold;
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+
+.achievement.B {
+    background: var(--info);
+    color: var(--text-inverse);
+    font-weight: bold;
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+
+.achievement.C {
+    background: var(--accent);
+    color: var(--text-inverse);
+    font-weight: bold;
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+
+.achievement.D {
+    background: var(--warning);
+    color: var(--text-inverse);
+    font-weight: bold;
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+
+.achievement.E, .achievement.미도달 {
+    background: var(--primary);
+    color: var(--text-inverse);
+    font-weight: bold;
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+
+.score {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.grade {
+    text-align: center;
+    font-weight: 500;
+}
+
+.rank {
+    text-align: center;
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+
+.avg-grade {
+    text-align: center;
+    font-weight: 600;
+    color: var(--primary);
     font-size: 1.1rem;
-    margin-bottom: 10px;
 }
 
 .grade-analysis-container {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 30px;
-    margin-top: 20px;
+    grid-template-rows: auto auto;
+    gap: 20px;
+    margin-bottom: 30px;
 }
 
 .chart-section {
-    background: #f9f9f9;
-    padding: 20px;
-    border-radius: 8px;
+    background: linear-gradient(180deg, var(--bg-card) 0%, var(--neutral-50) 100%);
+    border-radius: var(--radius-lg);
+    padding: 22px;
+    text-align: center;
+    border: 1px solid var(--neutral-200);
+}
+
+.chart-section h3 {
+    color: var(--text-primary);
+    margin-bottom: 20px;
+    font-size: 1.3rem;
+    font-weight: 500;
+}
+
+.chart-section canvas {
+    max-width: 100%;
+    height: 350px !important;
 }
 
 .stats-section {
     grid-column: 1 / -1;
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 20px;
-    margin-top: 20px;
+    gap: 16px;
+    background: linear-gradient(180deg, var(--bg-card) 0%, var(--neutral-50) 100%);
+    border-radius: var(--radius-lg);
+    padding: 22px;
+    border: 1px solid var(--neutral-200);
 }
 
 .stat-item {
-    background: white;
-    padding: 20px;
-    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
     text-align: center;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    background: var(--bg-card);
+    border-radius: var(--radius-md);
+    padding: 20px;
+    box-shadow: none;
+    border: 1px solid var(--neutral-200);
 }
 
 .stat-label {
-    display: block;
+    color: var(--text-secondary);
     font-size: 0.9rem;
-    color: #666;
-    margin-bottom: 5px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 8px;
 }
 
 .stat-value {
-    font-size: 1.5rem;
-    font-weight: bold;
-    color: #8fbaf7;
-}
-
-.student-analysis {
-    margin-top: 20px;
-}
-
-.student-selector {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 15px;
-    margin-bottom: 20px;
-    padding: 20px;
-    background: #f9f9f9;
-    border-radius: 8px;
-}
-
-.selector-group {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-}
-
-.selector-group label {
-    font-weight: bold;
-    font-size: 0.9rem;
-}
-
-.selector {
-    padding: 8px 12px;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    font-size: 14px;
-}
-
-.detail-btn {
-    padding: 8px 16px;
-    background: #8fbaf7;
-    color: white;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 14px;
-}
-
-.detail-btn:disabled {
-    background: #ccc;
-    cursor: not-allowed;
-}
-
-.view-toggle {
-    display: flex;
-    gap: 10px;
-    margin-bottom: 20px;
-}
-
-.toggle-btn {
-    padding: 10px 20px;
-    border: 1px solid #8fbaf7;
-    background: white;
-    color: #8fbaf7;
-    cursor: pointer;
-    border-radius: 4px;
-}
-
-.toggle-btn.active {
-    background: #8fbaf7;
-    color: white;
-}
-
-.search-box {
-    margin-bottom: 20px;
-}
-
-.search-box input {
-    width: 100%;
-    padding: 12px;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    font-size: 16px;
-}
-
-.student-table {
-    overflow-x: auto;
-}
-
-.student-table table {
-    width: 100%;
-    border-collapse: collapse;
-    background: white;
-}
-
-.student-table th,
-.student-table td {
-    padding: 12px;
-    text-align: left;
-    border-bottom: 1px solid #ddd;
-}
-
-.student-table th {
-    background: #8fbaf7;
-    color: white;
-    font-weight: bold;
-}
-
-.student-table tr:hover {
-    background: #f5f5f5;
-}
-
-.app-footer {
-    background: #f8f9fa;
-    padding: 20px 40px;
-    border-top: 1px solid #eee;
-    text-align: center;
-    font-size: 0.9rem;
-    color: #666;
-}
-
-.footer-right {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    gap: 20px;
-    flex-wrap: wrap;
+    color: var(--text-primary);
+    font-size: 2rem;
+    font-weight: 600;
 }
 
 @media (max-width: 768px) {
     .grade-analysis-container {
         grid-template-columns: 1fr;
+        gap: 20px;
     }
     
     .stats-section {
         grid-template-columns: repeat(2, 1fr);
+        gap: 15px;
     }
     
-    .student-selector {
-        flex-direction: column;
+    .chart-section {
+        padding: 15px;
     }
     
-    .footer-right {
-        flex-direction: column;
-        gap: 10px;
+    .stat-item {
+        padding: 15px;
+    }
+    
+    .stat-value {
+        font-size: 1.5rem;
     }
 }
-        `;
+
+.loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 60px;
+    color: var(--text-secondary);
+}
+
+.spinner {
+    width: 50px;
+    height: 50px;
+    border: 4px solid var(--neutral-200);
+    border-top: 4px solid var(--primary);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-bottom: 20px;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.loading p {
+    font-size: 1.1rem;
+    color: var(--text-secondary);
+}
+
+.error-message {
+    background: var(--warning-bg);
+    color: var(--warning);
+    padding: 20px;
+    margin: 20px 40px;
+    border-radius: var(--radius-md);
+    border-left: 5px solid var(--warning);
+    font-size: 1rem;
+}
+
+.file-list {
+    background: var(--neutral-100);
+    border-radius: var(--radius-lg);
+    padding: 20px;
+    margin: 20px 0;
+    border: 1px solid var(--neutral-200);
+}
+
+.file-list h4 {
+    color: var(--text-primary);
+    margin-bottom: 15px;
+    font-size: 1.1rem;
+}
+
+.file-list ul {
+    list-style: none;
+    padding: 0;
+}
+
+.file-list li {
+    background: var(--bg-card);
+    padding: 10px 15px;
+    margin: 8px 0;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--neutral-200);
+    box-shadow: none;
+}
+
+.file-selector-section {
+    background: var(--bg-card);
+    padding: 20px;
+    border-radius: var(--radius-lg);
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    border: 1px solid var(--neutral-200);
+}
+
+.file-selector-section label {
+    color: var(--text-primary);
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.file-select {
+    flex: 1;
+    padding: 10px 15px;
+    border: 2px solid var(--neutral-300);
+    border-radius: var(--radius-sm);
+    font-size: 1rem;
+    background: var(--bg-card);
+    outline: none;
+    transition: all 0.25s ease;
+}
+
+.file-select:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px var(--primary-bg);
+}
+
+.comparison-container {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 30px;
+}
+
+.comparison-section {
+    background: var(--neutral-100);
+    border-radius: var(--radius-lg);
+    padding: 25px;
+    border: 1px solid var(--border-light);
+}
+
+.comparison-section h3 {
+    color: var(--text-primary);
+    margin-bottom: 20px;
+    font-size: 1.3rem;
+    font-weight: 500;
+}
+
+.comparison-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--bg-card);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    box-shadow: var(--shadow-sm);
+}
+
+.comparison-table th,
+.comparison-table td {
+    padding: 12px 15px;
+    text-align: center;
+    border-bottom: 1px solid var(--neutral-200);
+}
+
+.comparison-table th {
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+    color: var(--text-inverse);
+    font-weight: 500;
+    font-size: 0.9rem;
+}
+
+.comparison-table tr:nth-child(even) {
+    background: var(--neutral-100);
+}
+
+.comparison-table tr:hover {
+    background: var(--primary-bg);
+}
+
+@media (max-width: 768px) {
+    .file-selector-section {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+    }
+    
+    .file-select {
+        width: 100%;
+    }
+    
+    .comparison-table {
+        font-size: 0.8rem;
+    }
+    
+    .comparison-table th,
+    .comparison-table td {
+        padding: 8px 6px;
+    }
+}
+
+/* 학생 선택 및 상세 분석 스타일 */
+.student-selector {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    background: var(--bg-card);
+    padding: 20px;
+    border-radius: var(--radius-lg);
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+    border: 1px solid var(--neutral-200);
+    box-shadow: var(--shadow-sm);
+}
+
+.selector-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.selector-group label {
+    font-weight: 500;
+    color: var(--text-primary);
+    white-space: nowrap;
+}
+
+.selector {
+    padding: 10px 12px;
+    border: 1px solid var(--neutral-300);
+    border-radius: var(--radius-sm);
+    font-size: 0.9rem;
+    background: var(--bg-card);
+    min-width: 120px;
+    transition: all 0.25s ease;
+}
+
+.selector:focus {
+    border-color: var(--primary);
+    outline: none;
+    box-shadow: 0 0 0 3px var(--primary-bg);
+}
+
+.detail-btn {
+    background: var(--bg-card);
+    color: var(--text-primary);
+    border: 1px solid var(--neutral-300);
+    padding: 10px 20px;
+    border-radius: var(--radius-sm);
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: all 0.25s ease;
+    white-space: nowrap;
+}
+
+.detail-btn:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-sm);
+    border-color: var(--primary);
+    color: var(--primary-dark);
+}
+
+.detail-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.view-toggle {
+    display: flex;
+    background: var(--neutral-100);
+    border-radius: var(--radius-md);
+    padding: 4px;
+    margin-bottom: 20px;
+    width: fit-content;
+    border: 1px solid var(--neutral-200);
+}
+
+.toggle-btn {
+    background: none;
+    border: none;
+    padding: 10px 20px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all 0.25s ease;
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+
+.toggle-btn.active {
+    background: var(--bg-card);
+    color: var(--text-primary);
+    box-shadow: var(--shadow-sm);
+}
+
+/* 학생 상세 분석 스타일 */
+.student-detail-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    background: linear-gradient(180deg, var(--bg-card) 0%, var(--neutral-100) 100%);
+    color: var(--text-primary);
+    padding: 22px 24px;
+    border-radius: var(--radius-lg);
+    margin-bottom: 20px;
+    border: 1px solid var(--border-light);
+    box-shadow: var(--shadow-md);
+}
+
+.student-info h3 {
+    font-size: 1.5rem;
+    margin-bottom: 6px;
+    font-weight: 400;
+}
+
+.student-meta {
+    display: flex;
+    gap: 14px;
+    font-size: 0.85rem;
+    opacity: 0.9;
+    flex-wrap: wrap;
+}
+
+.overall-stats {
+    display: flex;
+    gap: 12px;
+}
+
+.stat-card {
+    text-align: center;
+    background: var(--bg-card);
+    padding: 12px 16px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-light);
+    box-shadow: var(--shadow-sm);
+    min-width: 110px;
+}
+
+.stat-label {
+    display: block;
+    font-size: 0.8rem;
+    opacity: 0.8;
+    margin-bottom: 5px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.stat-value {
+    display: block;
+    font-size: 1.35rem;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.stat-value.grade {
+    color: var(--primary);
+}
+
+.student-detail-content {
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+    margin-bottom: 24px;
+}
+
+.analysis-overview {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.85fr);
+    gap: 20px;
+    margin-bottom: 20px;
+    align-items: start;
+}
+
+.student-summary {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.summary-card {
+    background: var(--bg-card);
+    border-radius: var(--radius-lg);
+    padding: 18px 20px;
+    box-shadow: var(--shadow-md);
+    border: 1px solid var(--border-light);
+}
+
+.summary-header {
+    margin-bottom: 14px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--neutral-200);
+}
+
+.summary-header h4 {
+    color: var(--text-primary);
+    font-size: 1.2rem;
+    font-weight: 600;
+    margin: 0;
+}
+
+.summary-grid {
+    display: grid;
+    gap: 10px;
+}
+
+.summary-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.summary-item:last-child {
+    border-bottom: none;
+}
+
+.summary-label {
+    font-weight: 500;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.summary-value {
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 1rem;
+    text-align: right;
+}
+
+.summary-value-group {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+}
+
+.summary-value.highlight {
+    color: var(--primary);
+    font-size: 1.05rem;
+    font-weight: 600;
+}
+
+.summary-value.orange {
+    color: var(--accent);
+    font-size: 1.05rem;
+    font-weight: 600;
+}
+
+.summary-note {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    text-align: right;
+    line-height: 1.35;
+    white-space: nowrap;
+}
+
+.metric-value.orange {
+    color: var(--accent);
+    font-weight: 600;
+}
+
+.chart-container {
+    background: var(--neutral-100);
+    border-radius: var(--radius-lg);
+    padding: 16px 18px 18px;
+    text-align: center;
+    border: 1px solid var(--border-light);
+    width: 100%;
+    max-width: 420px;
+    justify-self: end;
+}
+
+.chart-container h4 {
+    color: var(--text-primary);
+    margin-bottom: 12px;
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+.chart-container canvas {
+    display: block;
+    width: min(100%, 320px) !important;
+    height: auto !important;
+    margin: 0 auto;
+}
+
+.subject-details h4 {
+    color: var(--text-primary);
+    margin-bottom: 20px;
+    font-size: 1.2rem;
+    font-weight: 500;
+}
+
+.subject-cards {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+    max-height: none;
+}
+
+@media (max-width: 1200px) {
+    .subject-cards {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* 교과(군)별 섹션 스타일 */
+.subject-group-section {
+    background: var(--neutral-100);
+    border-radius: var(--radius-lg);
+    padding: 20px;
+    border: 1px solid var(--border-light);
+}
+
+.subject-group-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    background: var(--bg-card);
+    border-radius: var(--radius-md);
+    margin-bottom: 16px;
+    box-shadow: var(--shadow-sm);
+}
+
+.subject-group-header h5 {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.subject-group-header .subject-count {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    background: var(--neutral-200);
+    padding: 4px 10px;
+    border-radius: 10px;
+    font-weight: 500;
+}
+
+.subject-group-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+    gap: 15px;
+}
+
+/* 컴팩트 테이블 스타일 */
+.subject-group-section.compact {
+    padding: 14px;
+    margin-bottom: 0;
+    height: fit-content;
+}
+
+.subject-group-section.compact .subject-group-header {
+    margin-bottom: 12px;
+    padding: 8px 12px;
+}
+
+.subject-group-section.compact .subject-group-header h5 {
+    font-size: 0.95rem;
+}
+
+.subject-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--bg-card);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    font-size: 0.8rem;
+}
+
+.subject-table thead {
+    background: linear-gradient(135deg, var(--neutral-200) 0%, var(--neutral-100) 100%);
+}
+
+.subject-table th {
+    padding: 8px 6px;
+    text-align: center;
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    border-bottom: 2px solid var(--neutral-300);
+}
+
+.subject-table th:first-child {
+    text-align: left;
+    padding-left: 10px;
+}
+
+.subject-table td {
+    padding: 8px 6px;
+    border-bottom: 1px solid var(--neutral-200);
+    color: var(--text-primary);
+}
+
+.subject-table td.center {
+    text-align: center;
+}
+
+.subject-table td.subject-name-cell {
+    font-weight: 500;
+    padding-left: 10px;
+    max-width: 100px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.subject-table tbody tr:hover {
+    background: var(--neutral-100);
+}
+
+.subject-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.subject-table tr.no-grade-row {
+    opacity: 0.7;
+    background: var(--neutral-50);
+}
+
+.subject-table .score-value {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.subject-table .avg-value {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-left: 2px;
+}
+
+.subject-table .achievement-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 600;
+    font-size: 0.8rem;
+}
+
+.subject-table .achievement-badge.A { background: var(--success); color: var(--text-inverse); }
+.subject-table .achievement-badge.B { background: var(--info); color: var(--text-inverse); }
+.subject-table .achievement-badge.C { background: var(--accent); color: var(--text-inverse); }
+.subject-table .achievement-badge.D { background: var(--warning); color: var(--text-inverse); }
+.subject-table .achievement-badge.E { background: var(--primary); color: var(--text-inverse); }
+
+.subject-table .grade9-value {
+    color: var(--accent);
+    font-weight: 600;
+}
+
+@media (max-width: 768px) {
+    .subject-table {
+        font-size: 0.75rem;
+    }
+
+    .subject-table th,
+    .subject-table td {
+        padding: 8px 4px;
+    }
+
+    .subject-table td.subject-name-cell {
+        max-width: 80px;
+    }
+
+    .subject-table .avg-value {
+        display: none;
+    }
+}
+
+.subject-card.no-grade {
+    opacity: 0.8;
+    border-left: 4px solid var(--neutral-500);
+}
+
+.subject-metrics.simple {
+    grid-template-columns: 1fr 1fr;
+    margin-bottom: 0;
+}
+
+.no-grade-notice {
+    text-align: center;
+    padding: 15px;
+    background: var(--neutral-200);
+    border-radius: var(--radius-sm);
+    margin-top: 15px;
+}
+
+.no-grade-notice span {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    font-style: italic;
+}
+
+.subject-card {
+    background: var(--bg-card);
+    border-radius: var(--radius-md);
+    padding: 18px;
+    box-shadow: var(--shadow-sm);
+    transition: all 0.2s ease;
+    border: 1px solid var(--border-light);
+}
+
+.subject-card:hover {
+    box-shadow: var(--shadow-md);
+    border-color: var(--border-medium);
+}
+
+.subject-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid var(--neutral-200);
+}
+
+.subject-header h5 {
+    color: var(--text-primary);
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin: 0;
+}
+
+.subject-header .credits {
+    background: var(--info);
+    color: var(--text-inverse);
+    padding: 4px 8px;
+    border-radius: 12px;
+    font-size: 0.8rem;
+    font-weight: 500;
+}
+
+.subject-metrics {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 15px;
+    margin-bottom: 15px;
+}
+
+.subject-metrics:last-of-type {
+    grid-template-columns: 1fr 1fr 0fr;
+}
+
+.metric {
+    text-align: center;
+}
+
+.metric-label {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    margin-bottom: 5px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.metric-value {
+    display: block;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.metric-average {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    font-weight: normal;
+    margin-top: 2px;
+}
+
+.metric-value.achievement.A {
+    background: var(--success);
+    color: var(--text-inverse);
+    font-weight: bold;
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+.metric-value.achievement.B {
+    background: var(--info);
+    color: var(--text-inverse);
+    font-weight: bold;
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+.metric-value.achievement.C {
+    background: var(--accent);
+    color: var(--text-primary);
+    font-weight: bold;
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+.metric-value.achievement.D {
+    background: var(--warning);
+    color: var(--text-inverse);
+    font-weight: bold;
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+.metric-value.achievement.E, .metric-value.achievement.미도달 {
+    background: var(--primary);
+    color: var(--text-inverse);
+    font-weight: bold;
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+
+.percentile-bar {
+    height: 8px;
+    background: var(--neutral-200);
+    border-radius: 4px;
+    overflow: hidden;
+    position: relative;
+}
+
+.percentile-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.8s ease;
+}
+
+.percentile-fill.excellent { background: linear-gradient(90deg, var(--success), var(--success-light)); }
+.percentile-fill.good { background: linear-gradient(90deg, var(--info), var(--info-light)); }
+.percentile-fill.average { background: linear-gradient(90deg, var(--warning), var(--warning-light)); }
+.percentile-fill.low { background: linear-gradient(90deg, var(--neutral-500), var(--neutral-400)); }
+
+.percentile.excellent { color: var(--success); font-weight: 600; }
+.percentile.good { color: var(--info); font-weight: 600; }
+.percentile.average { color: var(--warning); font-weight: 600; }
+.percentile.low { color: var(--neutral-500); font-weight: 500; }
+
+@media (max-width: 1024px) {
+    .analysis-overview {
+        grid-template-columns: 1fr;
+        gap: 20px;
+    }
+    
+    .chart-container {
+        padding: 20px;
+    }
+    
+    .student-detail-header {
+        flex-direction: column;
+        gap: 20px;
+    }
+    
+    .overall-stats {
+        align-self: stretch;
+        justify-content: space-around;
+    }
+    
+    .subject-cards {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* 출력용 스타일 */
+@page {
+    size: A4 portrait;
+    margin: 10mm;
+}
+@media print {
+    .print-area {
+        transform-origin: top left !important;
+    }
+    .print-area.apply-print-scale {
+        transform: scale(var(--page-scale, 1)) !important;
+    }
+    * {
+        -webkit-print-color-adjust: exact !important;
+        color-adjust: exact !important;
+        print-color-adjust: exact !important;
+    }
+    
+    body {
+        background: white !important;
+        margin: 0;
+        padding: 0;
+        font-size: 12px;
+        line-height: 1.4;
+        color: #000 !important;
+    }
+    
+    .container {
+        max-width: none;
+        margin: 0;
+        box-shadow: none;
+        border-radius: 0;
+        background: white;
+    }
+    
+    header {
+        display: none !important;
+    }
+    
+    .upload-section,
+    .tabs,
+    .view-toggle,
+    .student-selector,
+    .search-box,
+    .print-controls {
+        display: none !important;
+    }
+    
+    .results-section {
+        padding: 15px;
+    }
+    
+    .tab-content {
+        display: block !important;
+    }
+    
+    .tab-content:not(.print-target) {
+        display: none !important;
+    }
+
+    /* 학생 탭 인쇄 시 개인 상세 페이지만 표시 */
+    #students-tab.only-class-print > *:not(.class-print-area) {
+        display: none !important;
+    }
+
+    /* A4에 맞춘 폭 고정 및 중앙 정렬 */
+    .class-print-area {
+        width: 190mm;
+        margin: 0 auto;
+    }
+    .class-print-area .student-print-page {
+        width: 190mm;
+        transform-origin: top left !important;
+    }
+    .class-print-area .student-print-page.apply-print-scale {
+        transform: scale(var(--page-scale, 1)) !important;
+    }
+
+    /* 학급 전체 인쇄 모드: 더 컴팩트한 카드와 차트 크기 */
+    #students-tab.only-class-print .student-detail-header {
+        padding: 12px;
+        margin-bottom: 10px;
+    }
+    #students-tab.only-class-print .student-info h3 {
+        font-size: 14px;
+    }
+    #students-tab.only-class-print .student-meta {
+        font-size: 11px;
+    }
+    #students-tab.only-class-print .summary-card,
+    #students-tab.only-class-print .stat-card {
+        margin-bottom: 8px;
+        padding: 10px;
+    }
+    
+    /* 별도 프린트 헤더는 사용하지 않음 */
+    .print-header {
+        display: none !important;
+    }
+    
+    .print-header h2 {
+        margin: 0;
+        color: #2c3e50;
+        font-size: 18px;
+        font-weight: bold;
+    }
+    
+    .print-date {
+        margin-top: 10px;
+        font-size: 12px;
+        color: #666;
+    }
+    
+    .student-detail-header {
+        background: #f8f9fa !important;
+        border: 2px solid #4facfe;
+        margin-bottom: 15px;
+        padding: 20px;
+        page-break-after: avoid;
+    }
+    
+    .student-info h3 {
+        color: #2c3e50 !important;
+        font-size: 16px;
+        margin-bottom: 8px;
+    }
+    
+    .student-meta {
+        color: #666 !important;
+        font-size: 12px;
+    }
+    
+    .stat-card {
+        border: 1px solid #ddd !important;
+        background: white !important;
+    }
+    
+    .stat-label {
+        color: #666 !important;
+        font-size: 10px;
+    }
+    
+    .stat-value {
+        color: #2c3e50 !important;
+        font-size: 14px;
+    }
+    
+    .analysis-overview {
+        grid-template-columns: 1fr;
+        gap: 15px;
+        page-break-inside: avoid;
+    }
+    
+    /* 레이더 차트도 출력/PDF에 포함 */
+    .chart-container {
+        display: block !important;
+    }
+    
+    .summary-card {
+        border: 1px solid #ddd !important;
+        background: #f9f9f9 !important;
+        margin-bottom: 15px;
+    }
+    
+    .summary-header h4 {
+        color: #2c3e50 !important;
+        font-size: 14px;
+    }
+    
+    .summary-label {
+        color: #666 !important;
+        font-size: 11px;
+    }
+    
+    .summary-value {
+        color: #2c3e50 !important;
+        font-size: 12px;
+    }
+    
+    .summary-value.highlight {
+        color: #4facfe !important;
+        font-weight: bold;
+    }
+    
+    .subject-details h4 {
+        color: #2c3e50 !important;
+        font-size: 14px;
+        margin-bottom: 15px;
+    }
+    
+    .subject-cards {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+        page-break-inside: avoid;
+    }
+    
+    .subject-card {
+        border: 1px solid #ddd !important;
+        background: white !important;
+        page-break-inside: avoid;
+        margin-bottom: 8px;
+        padding: 12px;
+    }
+    
+    .subject-header h5 {
+        color: #2c3e50 !important;
+        font-size: 12px;
+        margin: 0 0 8px 0;
+    }
+    
+    .subject-header .credits {
+        background: #4facfe !important;
+        color: white !important;
+        font-size: 9px;
+        padding: 2px 6px;
+    }
+    
+    .subject-metrics {
+        gap: 8px;
+        margin-bottom: 8px;
+    }
+    
+    .metric-label {
+        font-size: 9px;
+        color: #666 !important;
+    }
+    
+    .metric-value {
+        font-size: 11px;
+        color: #2c3e50 !important;
+    }
+    
+    .metric-average {
+        font-size: 9px;
+        color: #666 !important;
+    }
+    
+    .percentile-bar {
+        height: 6px;
+        background: #e9ecef !important;
+    }
+    
+    .no-grade-notice {
+        background: rgba(108, 117, 125, 0.1) !important;
+        font-size: 10px;
+    }
+    
+    .no-grade-notice span {
+        color: #666 !important;
+    }
+    
+    /* 성취도 색상 */
+    .achievement.A, .metric-value.achievement.A { 
+        background: #28a745 !important; 
+        color: white !important; 
+    }
+    .achievement.B, .metric-value.achievement.B { 
+        background: #17a2b8 !important; 
+        color: white !important; 
+    }
+    .achievement.C, .metric-value.achievement.C { 
+        background: #ffc107 !important; 
+        color: #212529 !important; 
+    }
+    .achievement.D, .metric-value.achievement.D { 
+        background: #fd7e14 !important; 
+        color: white !important; 
+    }
+    .achievement.E, .achievement.미도달, 
+    .metric-value.achievement.E, .metric-value.achievement.미도달 { 
+        background: #dc3545 !important; 
+        color: white !important; 
+    }
+    
+    /* 페이지 나누기 규칙 */
+    .subject-card {
+        break-inside: avoid;
+    }
+    
+    .summary-card {
+        break-inside: avoid;
+    }
+
+    /* 학급 전체 인쇄: 학생별 한 페이지씩 */
+    .class-print-area .student-print-page {
+        page-break-after: always;
+        break-after: page;
+    }
+    .class-print-area .student-print-page:last-child {
+        page-break-after: auto;
+        break-after: auto;
+    }
+}
+
+/* PDF 출력 버튼 스타일 */
+.print-controls {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.student-nav-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.student-nav-status {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    font-weight: 600;
+    padding: 0 4px;
+}
+
+.print-btn, .pdf-btn {
+    background: linear-gradient(135deg, var(--success) 0%, var(--success-light) 100%);
+    color: var(--text-inverse);
+    border: none;
+    padding: 10px 20px;
+    border-radius: var(--radius-sm);
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: all 0.25s ease;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 500;
+}
+
+.pdf-btn {
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
+}
+
+.print-btn:hover, .pdf-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+}
+
+.print-btn::before {
+    content: "🖨️";
+    font-size: 16px;
+}
+
+.pdf-btn::before {
+    content: "📄";
+    font-size: 16px;
+}
+
+@media (max-width: 768px) {
+    .student-selector {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 15px;
+    }
+
+    .selector-group {
+        justify-content: space-between;
+    }
+
+    .selector {
+        min-width: unset;
+        flex: 1;
+    }
+
+    .subject-metrics {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+    }
+
+    .container {
+        margin: 10px;
+        border-radius: var(--radius-lg);
+    }
+
+    header {
+        padding: 20px;
+    }
+
+    header h1 {
+        font-size: 1.6rem;
+    }
+
+    .header-subtitle {
+        font-size: 0.92rem;
+    }
+
+    .upload-section,
+    .results-section {
+        padding: 20px;
+    }
+
+    .file-input-label {
+        min-height: 74px;
+        padding: 16px 18px;
+    }
+
+    .action-buttons {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .subject-averages {
+        grid-template-columns: 1fr;
+    }
+
+    .tabs {
+        display: flex;
+        width: 100%;
+    }
+
+    .tab-btn {
+        min-width: 0;
+        padding: 12px 10px;
+        font-size: 0.85rem;
+    }
+
+    .students-grid {
+        grid-template-columns: 1fr;
+        gap: 15px;
+    }
+
+    .student-card-header {
+        padding: 14px 16px;
+        gap: 8px;
+    }
+
+    .student-card-badges {
+        gap: 6px;
+    }
+
+    .card-badge {
+        padding: 4px 8px;
+        gap: 4px;
+    }
+
+    .card-badge-label {
+        font-size: 0.6rem;
+    }
+
+    .card-badge-value {
+        font-size: 0.8rem;
+    }
+
+    .student-summary {
+        gap: 5px;
+    }
+
+    .summary-metric-inline {
+        padding: 3px 6px;
+    }
+
+    .summary-metric-inline .metric-label {
+        font-size: 0.6rem;
+    }
+
+    .summary-metric-inline .metric-value {
+        font-size: 0.78rem;
+    }
+
+    .subject-data {
+        gap: 6px;
+    }
+
+    .subject-name {
+        font-size: 0.85rem;
+    }
+
+    .subject-score, .subject-achievement, .subject-grade, .subject-percentile {
+        font-size: 0.75rem;
+    }
+
+    .print-controls {
+        justify-content: center;
+    }
+
+    .print-btn, .pdf-btn {
+        flex: 1;
+        min-width: 120px;
+        justify-content: center;
+    }
+
+    .analyze-btn,
+    .secondary-btn {
+        width: 100%;
+        justify-content: center;
+    }
+
+    .print-controls,
+    .student-nav-controls {
+        justify-content: center;
+    }
+}
+`;
     }
 
     // JavaScript 파일 내용 가져오기 (실제 동작하는 버전)
@@ -4049,6 +10263,21 @@ class StandaloneScoreAnalyzer {
         if (studentNameSearch) {
             studentNameSearch.addEventListener('input', () => {
                 this.updateStudentOptions();
+            });
+            studentNameSearch.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    // 학생 선택 드롭다운에 1명만 있으면 바로 상세 표시
+                    const studentSelect = document.getElementById('studentSelect');
+                    if (studentSelect && studentSelect.options.length === 2) {
+                        // options[0]은 "학생 선택" placeholder, options[1]이 유일한 학생
+                        studentSelect.value = studentSelect.options[1].value;
+                        this.showStudentDetail();
+                    } else if (studentSelect && studentSelect.value) {
+                        // 이미 선택된 학생이 있으면 바로 표시
+                        this.showStudentDetail();
+                    }
+                }
             });
         }
 
@@ -4111,6 +10340,9 @@ class StandaloneScoreAnalyzer {
         this.displaySubjectAverages();
         this.displayGradeAnalysis();
         this.displayStudentAnalysis();
+        if (document.querySelector('[data-tab="subjects"]') && document.getElementById('subjects-tab')) {
+            this.switchTab('subjects');
+        }
     }
 
     displaySubjectAverages() {
