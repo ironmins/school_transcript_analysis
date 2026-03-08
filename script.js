@@ -348,47 +348,237 @@ class ScoreAnalyzer {
             showStudentDetail.disabled = !studentSelect.value;
         });
         if (studentNameSearch) {
-            // 기존: 입력할 때마다 학생 목록 필터링
             studentNameSearch.addEventListener('input', () => {
                 this.updateStudentOptions();
+                this.showNameSearchDropdown();
             });
 
-            // 추가: Enter 키로 상세 분석 화면 전환
             studentNameSearch.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') {
+                const dropdown = document.getElementById('nameSearchDropdown');
+                const items = dropdown ? dropdown.querySelectorAll('.dropdown-item') : [];
+                const activeItem = dropdown ? dropdown.querySelector('.dropdown-item.active') : null;
+
+                if (e.key === 'ArrowDown') {
                     e.preventDefault();
-                    const studentSelectEl = document.getElementById('studentSelect');
-                    if (!studentSelectEl) return;
-
-                    // 옵션이 placeholder 1개 + 학생 1개 = 총 2개일 때 자동 선택
-                    if (studentSelectEl.options.length === 2) {
-                        studentSelectEl.value = studentSelectEl.options[1].value;
-                        const showBtn = document.getElementById('showStudentDetail');
-                        if (showBtn) showBtn.disabled = false;
+                    if (!dropdown || !dropdown.classList.contains('visible')) {
+                        this.showNameSearchDropdown();
+                        return;
                     }
-
-                    // 선택된 학생이 있으면 상세 분석 표시
-                    if (studentSelectEl.value) {
-                        this.showStudentDetail();
+                    if (!activeItem) {
+                        if (items.length > 0) items[0].classList.add('active');
+                    } else {
+                        const idx = Array.from(items).indexOf(activeItem);
+                        activeItem.classList.remove('active');
+                        if (idx < items.length - 1) {
+                            items[idx + 1].classList.add('active');
+                            items[idx + 1].scrollIntoView({ block: 'nearest' });
+                        } else {
+                            items[0].classList.add('active');
+                            items[0].scrollIntoView({ block: 'nearest' });
+                        }
                     }
+                } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    if (!activeItem) {
+                        if (items.length > 0) items[items.length - 1].classList.add('active');
+                    } else {
+                        const idx = Array.from(items).indexOf(activeItem);
+                        activeItem.classList.remove('active');
+                        if (idx > 0) {
+                            items[idx - 1].classList.add('active');
+                            items[idx - 1].scrollIntoView({ block: 'nearest' });
+                        } else {
+                            items[items.length - 1].classList.add('active');
+                            items[items.length - 1].scrollIntoView({ block: 'nearest' });
+                        }
+                    }
+                } else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if (activeItem) {
+                        activeItem.click();
+                    } else {
+                        // 드롭다운에 1명만 있으면 바로 선택
+                        if (items.length === 1) {
+                            items[0].click();
+                        } else {
+                            // 기존 로직: studentSelect에 1명이면 바로 상세
+                            const studentSelectEl = document.getElementById('studentSelect');
+                            if (studentSelectEl && studentSelectEl.options.length === 2) {
+                                studentSelectEl.value = studentSelectEl.options[1].value;
+                                const showBtn = document.getElementById('showStudentDetail');
+                                if (showBtn) showBtn.disabled = false;
+                            }
+                            if (studentSelectEl && studentSelectEl.value) {
+                                this.hideNameSearchDropdown();
+                                this.showStudentDetail();
+                            }
+                        }
+                    }
+                } else if (e.key === 'Escape') {
+                    this.hideNameSearchDropdown();
                 }
+            });
+
+            studentNameSearch.addEventListener('focus', () => {
+                if (studentNameSearch.value.trim()) {
+                    this.showNameSearchDropdown();
+                }
+            });
+
+            // 드롭다운 바깥 클릭 시 닫기
+            document.addEventListener('click', (e) => {
+                const wrapper = document.querySelector('.name-search-wrapper');
+                if (wrapper && !wrapper.contains(e.target)) {
+                    this.hideNameSearchDropdown();
+                }
+            });
+
+            // X 버튼
+            const nameSearchClear = document.getElementById('nameSearchClear');
+            if (nameSearchClear) {
+                nameSearchClear.addEventListener('click', () => {
+                    studentNameSearch.value = '';
+                    this.updateStudentOptions();
+                    this.hideNameSearchDropdown();
+                    this.updateClearButtonVisibility();
+                    studentNameSearch.focus();
+                });
+            }
+        }
+	        // 상세 분석 버튼
+        if (showStudentDetail) {
+            showStudentDetail.addEventListener('click', () => {
+                this.showStudentDetail();
             });
         }
 
-        showStudentDetail.addEventListener('click', () => {
-            this.showStudentDetail();
-        });
+        // 뷰 전환 버튼
+        if (tableViewBtn) {
+            tableViewBtn.addEventListener('click', () => {
+                this.switchView('table');
+            });
+        }
 
-        tableViewBtn.addEventListener('click', () => {
-            this.switchView('table');
-        });
+        if (detailViewBtn) {
+            detailViewBtn.addEventListener('click', () => {
+                this.switchView('detail');
+            });
+        }
 
-        detailViewBtn.addEventListener('click', () => {
-            this.switchView('detail');
-        });
-
+        // 학급 전체 PDF 버튼
         if (pdfClassBtn) {
-            pdfClassBtn.addEventListener('click', () => this.generateSelectedClassPDF());
+            pdfClassBtn.addEventListener('click', () => {
+                this.generateSelectedClassPDF();
+            });
+        }
+    }
+
+    showNameSearchDropdown() {
+        const dropdown = document.getElementById('nameSearchDropdown');
+        const studentNameSearch = document.getElementById('studentNameSearch');
+        const clearBtn = document.getElementById('nameSearchClear');
+        if (!dropdown || !studentNameSearch || !this.combinedData) return;
+
+        this.updateClearButtonVisibility();
+
+        const query = studentNameSearch.value.trim().toLowerCase();
+        if (!query) {
+            this.hideNameSearchDropdown();
+            return;
+        }
+
+        const gradeSelect = document.getElementById('gradeSelect');
+        const classSelect = document.getElementById('classSelect');
+        const selectedGrade = gradeSelect ? gradeSelect.value : '';
+        const selectedClass = classSelect ? classSelect.value : '';
+
+        let students = this.combinedData.students;
+        if (selectedGrade) {
+            students = students.filter(s => String(s.grade) === String(selectedGrade));
+        }
+        if (selectedClass) {
+            students = students.filter(s => String(s.class) === String(selectedClass));
+        }
+
+        const matched = students.filter(s =>
+            (s.name && s.name.toLowerCase().includes(query)) ||
+            (s.originalNumber && String(s.originalNumber).includes(query))
+        );
+
+        // 반 → 번호 순 정렬
+        matched.sort((a, b) => {
+            if (Number(a.class) !== Number(b.class)) return Number(a.class) - Number(b.class);
+            return Number(a.originalNumber || a.number) - Number(b.originalNumber || b.number);
+        });
+
+        let html = `<div class="dropdown-header">검색 결과: ${matched.length}명</div>`;
+
+        if (matched.length === 0) {
+            html += `<div class="dropdown-empty">검색 결과가 없습니다</div>`;
+        } else {
+            matched.forEach(student => {
+                // 이름에서 검색어 하이라이트
+                const name = student.name || '';
+                const highlightedName = name.replace(
+                    new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi'),
+                    '<mark>$1</mark>'
+                );
+                const classInfo = `${student.class}반 ${student.originalNumber || student.number}번`;
+
+                html += `
+                    <div class="dropdown-item" data-student-number="${student.number}">
+                        <span class="student-name-text">${highlightedName}</span>
+                        <span class="student-class-info">${classInfo}</span>
+                    </div>
+                `;
+            });
+        }
+
+        dropdown.innerHTML = html;
+        dropdown.classList.add('visible');
+
+        // 항목 클릭 이벤트
+        dropdown.querySelectorAll('.dropdown-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const studentNumber = item.getAttribute('data-student-number');
+                const student = this.combinedData.students.find(s => String(s.number) === String(studentNumber));
+                if (!student) return;
+
+                // 입력란에 이름 표시
+                studentNameSearch.value = student.name || '';
+                this.updateClearButtonVisibility();
+
+                // studentSelect 동기화
+                const studentSelect = document.getElementById('studentSelect');
+                if (studentSelect) {
+                    // 옵션에 없을 수 있으므로 먼저 updateStudentOptions 호출
+                    this.updateStudentOptions();
+                    studentSelect.value = student.number;
+                    const showBtn = document.getElementById('showStudentDetail');
+                    if (showBtn) showBtn.disabled = false;
+                }
+
+                this.hideNameSearchDropdown();
+
+                // 바로 상세 분석 표시
+                this.renderStudentDetail(student);
+                this.switchView('detail');
+            });
+        });
+    }
+
+    hideNameSearchDropdown() {
+        const dropdown = document.getElementById('nameSearchDropdown');
+        if (dropdown) {
+            dropdown.classList.remove('visible');
+        }
+    }
+
+    updateClearButtonVisibility() {
+        const studentNameSearch = document.getElementById('studentNameSearch');
+        const clearBtn = document.getElementById('nameSearchClear');
+        if (clearBtn && studentNameSearch) {
+            clearBtn.classList.toggle('visible', studentNameSearch.value.length > 0);
         }
     }
 
@@ -4816,6 +5006,99 @@ header h1 {
         justify-content: center;
     }
 }
+
+.name-search-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 0;
+}
+.name-search-wrapper input {
+    padding-right: 32px;
+}
+#nameSearchClear {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 1.1rem;
+    color: var(--text-muted);
+    padding: 2px 4px;
+    line-height: 1;
+    display: none;
+}
+#nameSearchClear.visible {
+    display: block;
+}
+#nameSearchClear:hover {
+    color: var(--text-primary);
+}
+#nameSearchDropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    max-height: 320px;
+    overflow-y: auto;
+    background: var(--bg-card, #fff);
+    border: 1px solid var(--neutral-300, #ddd);
+    border-top: none;
+    border-radius: 0 0 var(--radius-sm, 10px) var(--radius-sm, 10px);
+    box-shadow: var(--shadow-lg, 0 8px 24px rgba(0,0,0,0.12));
+    z-index: 1000;
+    display: none;
+}
+#nameSearchDropdown.visible {
+    display: block;
+}
+.dropdown-header {
+    padding: 8px 12px;
+    font-size: 0.78rem;
+    color: var(--text-muted, #888);
+    background: var(--neutral-100, #f5f5f5);
+    border-bottom: 1px solid var(--neutral-200, #eee);
+    font-weight: 600;
+}
+.dropdown-empty {
+    padding: 16px 12px;
+    text-align: center;
+    color: var(--text-muted, #888);
+    font-size: 0.88rem;
+}
+.dropdown-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 12px;
+    cursor: pointer;
+    transition: background 0.15s ease;
+    border-bottom: 1px solid var(--neutral-200, #eee);
+}
+.dropdown-item:last-child {
+    border-bottom: none;
+}
+.dropdown-item:hover,
+.dropdown-item.active {
+    background: var(--primary-bg, rgba(95, 74, 139, 0.08));
+}
+.dropdown-item .student-name-text {
+    font-weight: 500;
+    color: var(--text-primary, #333);
+}
+.dropdown-item .student-name-text mark {
+    background: #FFEB3B;
+    color: inherit;
+    padding: 0 1px;
+    border-radius: 2px;
+}
+.dropdown-item .student-class-info {
+    font-size: 0.8rem;
+    color: var(--text-muted, #888);
+    white-space: nowrap;
+}
 `;
     }
 
@@ -5599,7 +5882,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         // 반 옵션 생성 (전체)
-        const classes = [...new Set(this.combinedData.students.map(s => s.class))].sort();
+        const classes = [...new Set(this.combinedData.students.map(s => s.class))].sort((a, b) => Number(a) - Number(b));
         classSelect.innerHTML = '<option value="">전체</option>';
         classes.forEach(cls => {
             const option = document.createElement('option');
@@ -5621,7 +5904,7 @@ document.addEventListener('DOMContentLoaded', () => {
             students = students.filter(s => s.grade == selectedGrade);
         }
 
-        const classes = [...new Set(students.map(s => s.class))].sort();
+        const classes = [...new Set(students.map(s => s.class))].sort((a, b) => Number(a) - Number(b));
         classSelect.innerHTML = '<option value="">전체</option>';
         classes.forEach(cls => {
             const option = document.createElement('option');
@@ -7591,6 +7874,22 @@ body.\${LOCK_CLASS} .container { visibility: hidden !important; }
                 const styleEl = doc.createElement('style');
                 styleEl.textContent = cssText;
                 link.replaceWith(styleEl);
+            }
+        } catch (_) {}
+
+        // 2) Pretendard 폰트 링크 보존 (오프라인 대비 인라인 @import 추가)
+        try {
+            const pretendardLink = doc.querySelector('link[href*="pretendard"]');
+            if (pretendardLink) {
+                // 원본 링크는 유지하되, 폴백으로 인라인 @import도 추가
+                const fontStyle = doc.createElement('style');
+                fontStyle.textContent = `@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css');`;
+                pretendardLink.after(fontStyle);
+            } else {
+                // 링크가 아예 없으면 head에 추가
+                const fontStyle = doc.createElement('style');
+                fontStyle.textContent = `@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css');`;
+                doc.head.insertBefore(fontStyle, doc.head.firstChild);
             }
         } catch (_) {}
 
@@ -10214,6 +10513,99 @@ header h1 {
         justify-content: center;
     }
 }
+
+.name-search-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 0;
+}
+.name-search-wrapper input {
+    padding-right: 32px;
+}
+#nameSearchClear {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 1.1rem;
+    color: var(--text-muted);
+    padding: 2px 4px;
+    line-height: 1;
+    display: none;
+}
+#nameSearchClear.visible {
+    display: block;
+}
+#nameSearchClear:hover {
+    color: var(--text-primary);
+}
+#nameSearchDropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    max-height: 320px;
+    overflow-y: auto;
+    background: var(--bg-card, #fff);
+    border: 1px solid var(--neutral-300, #ddd);
+    border-top: none;
+    border-radius: 0 0 var(--radius-sm, 10px) var(--radius-sm, 10px);
+    box-shadow: var(--shadow-lg, 0 8px 24px rgba(0,0,0,0.12));
+    z-index: 1000;
+    display: none;
+}
+#nameSearchDropdown.visible {
+    display: block;
+}
+.dropdown-header {
+    padding: 8px 12px;
+    font-size: 0.78rem;
+    color: var(--text-muted, #888);
+    background: var(--neutral-100, #f5f5f5);
+    border-bottom: 1px solid var(--neutral-200, #eee);
+    font-weight: 600;
+}
+.dropdown-empty {
+    padding: 16px 12px;
+    text-align: center;
+    color: var(--text-muted, #888);
+    font-size: 0.88rem;
+}
+.dropdown-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 12px;
+    cursor: pointer;
+    transition: background 0.15s ease;
+    border-bottom: 1px solid var(--neutral-200, #eee);
+}
+.dropdown-item:last-child {
+    border-bottom: none;
+}
+.dropdown-item:hover,
+.dropdown-item.active {
+    background: var(--primary-bg, rgba(95, 74, 139, 0.08));
+}
+.dropdown-item .student-name-text {
+    font-weight: 500;
+    color: var(--text-primary, #333);
+}
+.dropdown-item .student-name-text mark {
+    background: #FFEB3B;
+    color: inherit;
+    padding: 0 1px;
+    border-radius: 2px;
+}
+.dropdown-item .student-class-info {
+    font-size: 0.8rem;
+    color: var(--text-muted, #888);
+    white-space: nowrap;
+}
 `;
     }
 
@@ -10263,22 +10655,100 @@ class StandaloneScoreAnalyzer {
         if (studentNameSearch) {
             studentNameSearch.addEventListener('input', () => {
                 this.updateStudentOptions();
+                this.showNameSearchDropdown();
             });
+
             studentNameSearch.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') {
+                const dropdown = document.getElementById('nameSearchDropdown');
+                const items = dropdown ? dropdown.querySelectorAll('.dropdown-item') : [];
+                const activeItem = dropdown ? dropdown.querySelector('.dropdown-item.active') : null;
+
+                if (e.key === 'ArrowDown') {
                     e.preventDefault();
-                    // 학생 선택 드롭다운에 1명만 있으면 바로 상세 표시
-                    const studentSelect = document.getElementById('studentSelect');
-                    if (studentSelect && studentSelect.options.length === 2) {
-                        // options[0]은 "학생 선택" placeholder, options[1]이 유일한 학생
-                        studentSelect.value = studentSelect.options[1].value;
-                        this.showStudentDetail();
-                    } else if (studentSelect && studentSelect.value) {
-                        // 이미 선택된 학생이 있으면 바로 표시
-                        this.showStudentDetail();
+                    if (!dropdown || !dropdown.classList.contains('visible')) {
+                        this.showNameSearchDropdown();
+                        return;
                     }
+                    if (!activeItem) {
+                        if (items.length > 0) items[0].classList.add('active');
+                    } else {
+                        const idx = Array.from(items).indexOf(activeItem);
+                        activeItem.classList.remove('active');
+                        if (idx < items.length - 1) {
+                            items[idx + 1].classList.add('active');
+                            items[idx + 1].scrollIntoView({ block: 'nearest' });
+                        } else {
+                            items[0].classList.add('active');
+                            items[0].scrollIntoView({ block: 'nearest' });
+                        }
+                    }
+                } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    if (!activeItem) {
+                        if (items.length > 0) items[items.length - 1].classList.add('active');
+                    } else {
+                        const idx = Array.from(items).indexOf(activeItem);
+                        activeItem.classList.remove('active');
+                        if (idx > 0) {
+                            items[idx - 1].classList.add('active');
+                            items[idx - 1].scrollIntoView({ block: 'nearest' });
+                        } else {
+                            items[items.length - 1].classList.add('active');
+                            items[items.length - 1].scrollIntoView({ block: 'nearest' });
+                        }
+                    }
+                } else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if (activeItem) {
+                        activeItem.click();
+                    } else {
+                        // 드롭다운에 1명만 있으면 바로 선택
+                        if (items.length === 1) {
+                            items[0].click();
+                        } else {
+                            // 기존 로직: studentSelect에 1명이면 바로 상세
+                            const studentSelectEl = document.getElementById('studentSelect');
+                            if (studentSelectEl && studentSelectEl.options.length === 2) {
+                                studentSelectEl.value = studentSelectEl.options[1].value;
+                                const showBtn = document.getElementById('showStudentDetail');
+                                if (showBtn) showBtn.disabled = false;
+                            }
+                            if (studentSelectEl && studentSelectEl.value) {
+                                this.hideNameSearchDropdown();
+                                this.showStudentDetail();
+                            }
+                        }
+                    }
+                } else if (e.key === 'Escape') {
+                    this.hideNameSearchDropdown();
                 }
             });
+
+            studentNameSearch.addEventListener('focus', () => {
+                if (studentNameSearch.value.trim()) {
+                    this.showNameSearchDropdown();
+                }
+            });
+
+            // 드롭다운 바깥 클릭 시 닫기
+            document.addEventListener('click', (e) => {
+                const wrapper = document.querySelector('.name-search-wrapper');
+                if (wrapper && !wrapper.contains(e.target)) {
+                    this.hideNameSearchDropdown();
+                }
+            });
+
+            // X 버튼
+            const nameSearchClear = document.getElementById('nameSearchClear');
+            if (nameSearchClear) {
+                nameSearchClear.addEventListener('click', () => {
+                    studentNameSearch.value = '';
+                    this.updateStudentOptions();
+                    this.hideNameSearchDropdown();
+                    this.updateClearButtonVisibility();
+                    studentNameSearch.focus();
+                });
+            }
         }
 
         if (studentSearch) {

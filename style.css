@@ -2490,3 +2490,119 @@ header h1 {
         justify-content: center;
     }
 }
+
+/* ── 학생 이름 검색 자동완성 드롭다운 ── */
+.name-search-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.name-search-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    min-width: 280px;
+    max-height: 260px;
+    overflow-y: auto;
+    background: var(--bg-card);
+    border: 1px solid var(--neutral-300);
+    border-top: none;
+    border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+    box-shadow: var(--shadow-lg);
+    z-index: 1000;
+    display: none;
+}
+
+.name-search-dropdown.visible {
+    display: block;
+}
+
+.name-search-dropdown .dropdown-header {
+    padding: 8px 14px;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--neutral-200);
+    background: var(--neutral-50);
+    position: sticky;
+    top: 0;
+}
+
+.name-search-dropdown .dropdown-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 14px;
+    cursor: pointer;
+    transition: background 0.15s ease;
+    border-bottom: 1px solid var(--neutral-100);
+}
+
+.name-search-dropdown .dropdown-item:last-child {
+    border-bottom: none;
+}
+
+.name-search-dropdown .dropdown-item:hover,
+.name-search-dropdown .dropdown-item.active {
+    background: var(--primary-bg);
+}
+
+.name-search-dropdown .dropdown-item .student-name-text {
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 0.92rem;
+}
+
+.name-search-dropdown .dropdown-item .student-name-text mark {
+    background: rgba(95, 74, 139, 0.2);
+    color: var(--primary);
+    padding: 0 2px;
+    border-radius: 2px;
+}
+
+.name-search-dropdown .dropdown-item .student-class-info {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+    margin-left: 12px;
+}
+
+.name-search-dropdown .dropdown-empty {
+    padding: 16px 14px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.88rem;
+}
+
+/* 검색 입력 X 버튼 */
+.name-search-wrapper .search-clear-btn {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    font-size: 1.1rem;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 2px 6px;
+    line-height: 1;
+    border-radius: 50%;
+    transition: all 0.15s ease;
+    display: none;
+}
+
+.name-search-wrapper .search-clear-btn:hover {
+    background: var(--neutral-200);
+    color: var(--text-primary);
+}
+
+.name-search-wrapper .search-clear-btn.visible {
+    display: block;
+}
+
+.name-search-wrapper #studentNameSearch {
+    padding-right: 30px;
+}

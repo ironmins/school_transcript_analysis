@@ -118,9 +118,11 @@
                                 <option value="">학생 선택</option>
                             </select>
                         </div>
-                        <div class="selector-group">
+                        <div class="selector-group name-search-wrapper">
                             <label for="studentNameSearch">이름:</label>
-                            <input id="studentNameSearch" class="selector" type="text" placeholder="이름으로 검색" />
+                            <input id="studentNameSearch" class="selector" type="text" placeholder="이름으로 검색" autocomplete="off" />
+                            <button type="button" class="search-clear-btn" id="nameSearchClear" title="지우기">&times;</button>
+                            <div class="name-search-dropdown" id="nameSearchDropdown"></div>
                         </div>
                         <button id="showStudentDetail" class="detail-btn" disabled>상세 분석</button>
                         <button id="pdfClassBtn" class="detail-btn" title="선택한 학급 전체 PDF 저장">학급 전체 PDF</button>
